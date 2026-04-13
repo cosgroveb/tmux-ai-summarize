@@ -7,11 +7,13 @@ script_dir=${0:A:h}
 repo_root=${script_dir:h}
 real_tmux=${TMUX_REAL_BIN:-$(command -v tmux)}
 provider_mode=${TMUX_AI_SUMMARIZE_PROVIDER_MODE:-mock}
+source "$repo_root/scripts/lib.zsh"
+driver_helpers_path="$script_dir/lib.zsh"
+source "$driver_helpers_path"
 TMUX_AI_SUMMARIZE_SOCKET=
 TMUX_AI_SUMMARIZE_TMPDIR=
 TMUX_AI_SUMMARIZE_WRAPPER_DIR=
 TMUX_AI_SUMMARIZE_PROVIDER_PID=
-TMUX_AI_SUMMARIZE_CLIENT_PID=
 TMUX_AI_SUMMARIZE_SCENARIO=
 
 fail() {
@@ -82,17 +84,13 @@ tmux_cmd() {
   PATH="$wrapper_dir:$PATH" tmux -L "$TMUX_AI_SUMMARIZE_SOCKET" "$@"
 }
 
-cleanup_detached_cleanup() {
+teardown_scenario() {
+  stop_attached_client
+
   if [[ -n ${TMUX_AI_SUMMARIZE_PROVIDER_PID:-} ]]; then
     kill "$TMUX_AI_SUMMARIZE_PROVIDER_PID" >/dev/null 2>&1 || true
     wait "$TMUX_AI_SUMMARIZE_PROVIDER_PID" 2>/dev/null || true
     TMUX_AI_SUMMARIZE_PROVIDER_PID=
-  fi
-
-  if [[ -n ${TMUX_AI_SUMMARIZE_CLIENT_PID:-} ]]; then
-    kill "$TMUX_AI_SUMMARIZE_CLIENT_PID" >/dev/null 2>&1 || true
-    wait "$TMUX_AI_SUMMARIZE_CLIENT_PID" 2>/dev/null || true
-    TMUX_AI_SUMMARIZE_CLIENT_PID=
   fi
 
   if [[ -n ${TMUX_AI_SUMMARIZE_WRAPPER_DIR:-} ]]; then
@@ -104,42 +102,6 @@ cleanup_detached_cleanup() {
     rm -rf "$TMUX_AI_SUMMARIZE_TMPDIR"
     TMUX_AI_SUMMARIZE_TMPDIR=
   fi
-}
-
-wait_for_buffer_removal() {
-  local wrapper_dir=$1
-  local buffer_name=$2
-  local timeout=50
-  local buffers
-
-  while (( timeout > 0 )); do
-    buffers=$(tmux_cmd "$wrapper_dir" list-buffers -F '#{buffer_name}' 2>/dev/null || true)
-    if ! print -r -- "$buffers" | rg -Fxq -- "$buffer_name"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_log_line() {
-  local log_file=$1
-  local pattern=$2
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(cat "$log_file" 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
 }
 
 wait_for_file() {
@@ -156,70 +118,6 @@ wait_for_file() {
 
   return 1
 }
-
-wait_for_fresh_buffer() {
-  local wrapper_dir=$1
-  local timeout=50
-  local buffer_name
-
-  while (( timeout > 0 )); do
-    buffer_name=$(tmux_cmd "$wrapper_dir" list-buffers -F '#{buffer_name}' 2>/dev/null | rg '^ai-summarize-' | head -1 || true)
-    if [[ -n $buffer_name ]]; then
-      print -r -- "$buffer_name"
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-normalize_transcript() {
-  local transcript_file=$1
-
-  [[ -r $transcript_file ]] || return 0
-  perl -0pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g; s/\r/\n/g; s/\x0f|\x0e//g' -- "$transcript_file"
-}
-
-wait_for_transcript_pattern() {
-  local transcript_file=$1
-  local pattern=$2
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript "$transcript_file" 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_loading_only() {
-  local transcript_file=$1
-  local final_pattern=$2
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript "$transcript_file" 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- 'Summarizing...'; then
-      if ! print -r -- "$content" | rg -q -- "$final_pattern"; then
-        return 0
-      fi
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
 start_mock_provider() {
   local request_log=$1
   local port_file=$2
@@ -255,6 +153,7 @@ class Handler(BaseHTTPRequestHandler):
                 handle,
             )
 
+        # Keep the loading state visible long enough for wait_for_popup_loading.
         time.sleep(0.5)
         response = json.dumps(
             {"choices": [{"message": {"content": summary_text}}]}
@@ -273,16 +172,16 @@ PY
   TMUX_AI_SUMMARIZE_PROVIDER_PID=$!
 }
 
-attached_client_mock() {
+run_attached_client_scenario() {
   local fixture_text='tmux ai summarize integration fixture'
-  local scenario_label="scenario: attached-client ${provider_mode} path"
-  local live_base_url live_model
+  local scenario_name="scenario: attached-client ${provider_mode} path"
+  local live_base_url live_model request_url
   local quoted_fixture
   local log_file transcript request_log='' port_file='' port='' binding driver_script actual_model actual_user_content
   local runner_path
 
   validate_provider_mode
-  print -u2 -r -- "$scenario_label"
+  print -u2 -r -- "$scenario_name"
   quoted_fixture=$(printf '%q' "$fixture_text")
 
   TMUX_AI_SUMMARIZE_SCENARIO="attached-${provider_mode}"
@@ -290,10 +189,14 @@ attached_client_mock() {
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   transcript="$TMUX_AI_SUMMARIZE_TMPDIR/client.typescript"
   runner_path="$repo_root/scripts/summarize-selection.zsh"
-  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
+  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-$$-${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
+  tmux_wrapper_dir=$TMUX_AI_SUMMARIZE_WRAPPER_DIR
+  tmux_socket_name=$TMUX_AI_SUMMARIZE_SOCKET
+  log_path=$log_file
+  transcript_path=$transcript
 
-  trap cleanup_detached_cleanup EXIT INT TERM
+  trap teardown_scenario EXIT INT TERM
 
   if [[ $provider_mode == mock ]]; then
     request_log="$TMUX_AI_SUMMARIZE_TMPDIR/request.json"
@@ -340,138 +243,42 @@ attached_client_mock() {
 #!/usr/bin/env zsh
 
 emulate -L zsh
-set -u
+set -eu
 
-wrapper_dir=$1
-socket_name=$2
-transcript_file=$3
-launcher_path=$4
-log_file=$5
-provider_mode=$6
+helper_path=$1
+source "$helper_path"
 
-fail() {
-  print -u2 -r -- "FAIL: $1"
-  exit 1
-}
+tmux_wrapper_dir=$2
+tmux_socket_name=$3
+transcript_path=$4
+launcher_path=$5
+log_path=$6
+provider_mode=$7
 
-tmux_cmd() {
-  PATH="$wrapper_dir:$PATH" tmux -L "$socket_name" "$@"
-}
+trap 'stop_attached_client' EXIT INT TERM
 
-wait_for_log_line() {
-  local pattern=$1
-  local timeout=50
-  local content
+start_attached_client test
+client_name=$(find_attached_client_name) || fail_test "attached client never appeared"
 
-  while (( timeout > 0 )); do
-    content=$(cat "$log_file" 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
+pane=$(tmux_test_cmd display-message -p -t test:0.0 '#{pane_id}')
+tmux_test_cmd copy-mode -t "$pane"
+tmux_test_cmd send-keys -t "$pane" -X history-top
+tmux_test_cmd send-keys -t "$pane" -X select-line
+print -n -- 'S' >&$attached_client_input_fd
 
-  return 1
-}
-
-normalize_transcript() {
-  cat "$transcript_file" 2>/dev/null | perl -0pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g; s/\r/\n/g; s/\x0f|\x0e//g'
-}
-
-wait_for_loading_only() {
-  local final_pattern=$1
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- 'Summarizing...'; then
-      if ! print -r -- "$content" | rg -q -- "$final_pattern"; then
-        return 0
-      fi
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_transcript_pattern() {
-  local pattern=$1
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_live_summary() {
-  local timeout=200
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- 'Nothing selected\.|Nothing to summarize\.|Missing API key\.|Request failed|Request timed out\.|Provider returned no summary content\.'; then
-      return 1
-    fi
-    if print -r -- "$content" | rg -q -- '[-*] '; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-input_fifo=$(mktemp -u "${TMPDIR:-/tmp}/tmux-ai-summarize-input.XXXXXX")
-mkfifo "$input_fifo"
-TERM="${TERM:-screen-256color}" PATH="$wrapper_dir:$PATH" script -qefc "TERM=screen-256color tmux -L $socket_name attach-session -t test" "$transcript_file" < "$input_fifo" >/dev/null 2>&1 &
-client_driver_pid=$!
-exec {input_fd}> "$input_fifo"
-trap 'exec {input_fd}>&-; rm -f "$input_fifo"; kill "$client_driver_pid" >/dev/null 2>&1 || true; wait "$client_driver_pid" 2>/dev/null || true' EXIT INT TERM
-
-client_name=
-for _ in {1..50}; do
-  client_name=$(tmux_cmd list-clients -F '#{client_name}' 2>/dev/null | head -1 || true)
-  [[ -n $client_name ]] && break
-  sleep 0.1
-done
-if [[ -z $client_name ]]; then
-  ps -ef | rg -- "script -qefc|tmux -L ${socket_name}|${transcript_file}" >&2 || true
-  sed -n '1,40p' "$transcript_file" >&2 || true
-  fail "attached client never appeared"
-fi
-
-pane=$(tmux_cmd display-message -p -t test:0.0 '#{pane_id}')
-tmux_cmd copy-mode -t "$pane"
-tmux_cmd send-keys -t "$pane" -X history-top
-tmux_cmd send-keys -t "$pane" -X select-line
-print -n -- 'S' >&$input_fd
-
-wait_for_log_line '^display-popup ' || fail "runner never attempted popup on attached client"
-wait_for_log_line '^delete-buffer -b ai-summarize-' || fail "binding never consumed a fresh prefixed buffer"
+wait_for_log_line '^display-popup ' || fail_test "runner never attempted popup on attached client"
+wait_for_log_line '^delete-buffer -b ai-summarize-' || fail_test "binding never consumed a fresh prefixed buffer"
 if [[ $provider_mode == mock ]]; then
-  wait_for_loading_only '- concise point one' || fail "popup never showed an observable loading state before final output"
-  wait_for_transcript_pattern '- concise point one' || fail "popup never rendered the first bullet prefix"
-  wait_for_transcript_pattern '- concise point two' || fail "popup never rendered the second bullet prefix"
+  wait_for_popup_loading '- concise point one' || fail_test "popup never showed an observable loading state before final output"
+  wait_for_transcript_pattern '- concise point one' || fail_test "popup never rendered the first bullet prefix"
+  wait_for_transcript_pattern '- concise point two' || fail_test "popup never rendered the second bullet prefix"
 else
-  wait_for_transcript_pattern 'Summarizing\.\.\.' || fail "popup never rendered the loading state in live mode"
-  wait_for_live_summary || fail "live provider popup never rendered bullet output"
+  wait_for_transcript_pattern 'Summarizing\.\.\.' || fail_test "popup never rendered the loading state in live mode"
+  wait_for_live_summary || fail_test "live provider popup never rendered bullet output"
 fi
 EOF
   chmod +x "$driver_script"
-  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file" "$provider_mode"
+  zsh "$driver_script" "$driver_helpers_path" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file" "$provider_mode"
 
   if [[ $provider_mode == mock ]]; then
     jq -e '.path == "/v1/chat/completions"' "$request_log" >/dev/null || fail "request path was not /v1/chat/completions"
@@ -481,14 +288,20 @@ EOF
     jq -e '.body.messages[0].role == "system"' "$request_log" >/dev/null || fail "request did not include the system prompt"
     actual_user_content=$(jq -r '.body.messages[1].content // "<missing>"' "$request_log")
     print -r -- "$actual_user_content" | rg -Fq -- "$fixture_text" || fail "request user content was: $actual_user_content"
+  else
+    wait_for_file "$request_log" || fail "live provider request log was not written"
+    request_url=$(jq -r '.url // "<missing>"' "$request_log")
+    [[ $request_url == "${live_base_url%/}/chat/completions" ]] || fail "request used url $request_url instead of ${live_base_url%/}/chat/completions"
+    actual_model=$(jq -r '.body.model // "<missing>"' "$request_log")
+    [[ $actual_model == "$live_model" ]] || fail "request used model $actual_model instead of $live_model"
   fi
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}|#{buffer_sample}' | rg -Fq -- "|$fixture_text" || fail "tmux did not preserve the copied selection in the normal buffer stack"
 
-  cleanup_detached_cleanup
+  teardown_scenario
   trap - EXIT INT TERM
 }
 
-detached_cleanup() {
+run_detached_cleanup_scenario() {
   print -u2 -r -- "scenario: detached cleanup path"
 
   local log_file pane runner_path quoted_runner_path pane_scope quoted_pane_scope scoped_buffer_name
@@ -496,42 +309,47 @@ detached_cleanup() {
   TMUX_AI_SUMMARIZE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize.XXXXXX")
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   runner_path="$repo_root/scripts/summarize-selection.zsh"
-  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
+  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-$$-${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
+  tmux_wrapper_dir=$TMUX_AI_SUMMARIZE_WRAPPER_DIR
+  tmux_socket_name=$TMUX_AI_SUMMARIZE_SOCKET
+  log_path=$log_file
+  transcript_path=
 
-  trap cleanup_detached_cleanup EXIT INT TERM
+  trap teardown_scenario EXIT INT TERM
 
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" -f /dev/null new-session -d -s test 'printf "hello world\n"; sleep 1000' >/dev/null
   pane=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" display-message -p -t test:0.0 '#{pane_id}')
   pane_scope=$pane
   quoted_pane_scope=$(printf '%q' "$pane_scope")
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-buffer -b 'ai-summarize-%999-stale' 'stale selection'
-  sleep 11
+  # Wait past the shared freshness window so this prefixed buffer is definitely stale.
+  sleep "$((summary_buffer_fresh_window_seconds + 1))"
   quoted_runner_path=$(printf '%q' "$runner_path")
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "TMUX_AI_SUMMARIZE_BUFFER_SCOPE=$quoted_pane_scope $quoted_runner_path"
-  wait_for_log_line "$log_file" '^display-message .*Nothing selected\.' || fail "stale-only prefixed buffer should fall through to Nothing selected"
+  wait_for_log_line '^display-message .*Nothing selected\.' || fail "stale-only prefixed buffer should fall through to Nothing selected"
   rg -q '^display-popup ' "$log_file" && fail "stale-only prefixed buffer should not launch popup"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-stale' || fail "stale-only foreign prefixed buffer should not be consumed"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" copy-mode -t "$pane"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X history-top
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X select-line
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X copy-selection-and-cancel "ai-summarize-$pane_scope-"
-  scoped_buffer_name=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg "^ai-summarize-$(printf '%s' "$pane_scope" | sed 's/[.[\\*^$()+?{|]/\\\\&/g')-" | head -1 || true)
+  scoped_buffer_name=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg "^ai-summarize-$(printf '%s' "$pane_scope" | sed 's/[.[\\*^$()+?{|]/\\\\&/g')-" | head -n 1 || true)
   [[ -n $scoped_buffer_name ]] || fail "expected copy-mode to create a pane-scoped prefixed buffer"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-buffer -b 'ai-summarize-%999-fresh' 'wrong selection'
 
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "TMUX_AI_SUMMARIZE_BUFFER_SCOPE=$quoted_pane_scope $quoted_runner_path"
-  wait_for_buffer_removal "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$scoped_buffer_name" || fail "pane-scoped prefixed buffer was not deleted after popup launch failed"
-  wait_for_log_line "$log_file" '^display-popup ' || fail "runner never attempted popup"
-  wait_for_log_line "$log_file" '^display-message .*Popup launch failed\.' || fail "runner did not fall back to a status-line message"
+  wait_for_buffer_removal "$scoped_buffer_name" || fail "pane-scoped prefixed buffer was not deleted after popup launch failed"
+  wait_for_log_line '^display-popup ' || fail "runner never attempted popup"
+  wait_for_log_line '^display-message .*Popup launch failed\.' || fail "runner did not fall back to a status-line message"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-fresh' || fail "foreign fresh prefixed buffer should remain"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-stale' || fail "stale-only foreign prefixed buffer should remain"
 
-  cleanup_detached_cleanup
+  teardown_scenario
   trap - EXIT INT TERM
 }
 
-no_selection() {
+run_no_selection_scenario() {
   print -u2 -r -- "scenario: no selection popup"
 
   local log_file transcript driver_script runner_path
@@ -540,10 +358,14 @@ no_selection() {
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   transcript="$TMUX_AI_SUMMARIZE_TMPDIR/client.typescript"
   runner_path="$repo_root/scripts/summarize-selection.zsh"
-  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
+  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-$$-${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
+  tmux_wrapper_dir=$TMUX_AI_SUMMARIZE_WRAPPER_DIR
+  tmux_socket_name=$TMUX_AI_SUMMARIZE_SOCKET
+  log_path=$log_file
+  transcript_path=$transcript
 
-  trap cleanup_detached_cleanup EXIT INT TERM
+  trap teardown_scenario EXIT INT TERM
 
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" -f /dev/null new-session -d -s test 'printf "hello world\n"; sleep 1000' >/dev/null
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-option -g mode-keys vi
@@ -554,130 +376,42 @@ no_selection() {
 #!/usr/bin/env zsh
 
 emulate -L zsh
-set -u
+set -eu
 
-wrapper_dir=$1
-socket_name=$2
-transcript_file=$3
-launcher_path=$4
-log_file=$5
+helper_path=$1
+source "$helper_path"
 
-fail() {
-  print -u2 -r -- "FAIL: $1"
-  exit 1
-}
+tmux_wrapper_dir=$2
+tmux_socket_name=$3
+transcript_path=$4
+launcher_path=$5
+log_path=$6
 
-tmux_cmd() {
-  PATH="$wrapper_dir:$PATH" tmux -L "$socket_name" "$@"
-}
+trap 'stop_attached_client' EXIT INT TERM
 
-wait_for_fresh_buffer() {
-  local timeout=50
-  local buffer_name
-
-  while (( timeout > 0 )); do
-    buffer_name=$(tmux_cmd list-buffers -F '#{buffer_name}' 2>/dev/null | rg '^ai-summarize-' | head -1 || true)
-    if [[ -n $buffer_name ]]; then
-      print -r -- "$buffer_name"
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_buffer_removal() {
-  local buffer_name=$1
-  local timeout=50
-  local buffers
-
-  while (( timeout > 0 )); do
-    buffers=$(tmux_cmd list-buffers -F '#{buffer_name}' 2>/dev/null || true)
-    if ! print -r -- "$buffers" | rg -Fxq -- "$buffer_name"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-normalize_transcript() {
-  cat "$transcript_file" 2>/dev/null | perl -0pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g; s/\r/\n/g; s/\x0f|\x0e//g'
-}
-
-wait_for_log_line() {
-  local pattern=$1
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(cat "$log_file" 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_transcript_pattern() {
-  local pattern=$1
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-input_fifo=$(mktemp -u "${TMPDIR:-/tmp}/tmux-ai-summarize-input.XXXXXX")
-mkfifo "$input_fifo"
-TERM="${TERM:-screen-256color}" PATH="$wrapper_dir:$PATH" script -qefc "TERM=screen-256color tmux -L $socket_name attach-session -t test" "$transcript_file" < "$input_fifo" >/dev/null 2>&1 &
-client_driver_pid=$!
-exec {input_fd}> "$input_fifo"
-trap 'exec {input_fd}>&-; rm -f "$input_fifo"; kill "$client_driver_pid" >/dev/null 2>&1 || true; wait "$client_driver_pid" 2>/dev/null || true' EXIT INT TERM
-
-client_name=
-for _ in {1..50}; do
-  client_name=$(tmux_cmd list-clients -F '#{client_name}' 2>/dev/null | head -1 || true)
-  [[ -n $client_name ]] && break
-  sleep 0.1
-done
-[[ -n $client_name ]] || fail "attached client never appeared"
+start_attached_client test
+client_name=$(find_attached_client_name) || fail_test "attached client never appeared"
 quoted_client_name=$(printf '%q' "$client_name")
 quoted_launcher_path=$(printf '%q' "$launcher_path")
 
-pane=$(tmux_cmd display-message -p -t test:0.0 '#{pane_id}')
-tmux_cmd copy-mode -t "$pane"
-tmux_cmd send-keys -t "$pane" -X history-top
-tmux_cmd send-keys -t "$pane" -X copy-selection-and-cancel ai-summarize-
-tmux_cmd list-buffers -F '#{buffer_name}' | rg -q '^ai-summarize-' && fail "no-selection copy-mode path unexpectedly created a prefixed buffer"
-tmux_cmd run-shell -b "TMUX_AI_SUMMARIZE_CLIENT=$quoted_client_name $quoted_launcher_path"
+pane=$(tmux_test_cmd display-message -p -t test:0.0 '#{pane_id}')
+tmux_test_cmd copy-mode -t "$pane"
+tmux_test_cmd send-keys -t "$pane" -X history-top
+tmux_test_cmd send-keys -t "$pane" -X copy-selection-and-cancel ai-summarize-
+tmux_test_cmd list-buffers -F '#{buffer_name}' | rg -q '^ai-summarize-' && fail_test "no-selection copy-mode path unexpectedly created a prefixed buffer"
+tmux_test_cmd run-shell -b "TMUX_AI_SUMMARIZE_CLIENT=$quoted_client_name $quoted_launcher_path"
 
-wait_for_log_line '^display-popup ' || fail "no-selection path did not launch a popup"
-wait_for_transcript_pattern 'Nothing selected\.' || fail "no-selection popup did not render the expected message"
+wait_for_log_line '^display-popup ' || fail_test "no-selection path did not launch a popup"
+wait_for_transcript_pattern 'Nothing selected\.' || fail_test "no-selection popup did not render the expected message"
 EOF
   chmod +x "$driver_script"
-  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file"
+  zsh "$driver_script" "$driver_helpers_path" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file"
 
-  cleanup_detached_cleanup
+  teardown_scenario
   trap - EXIT INT TERM
 }
 
-whitespace_only() {
+run_whitespace_only_scenario() {
   print -u2 -r -- "scenario: whitespace-only popup"
 
   local log_file transcript driver_script runner_path
@@ -686,10 +420,14 @@ whitespace_only() {
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   transcript="$TMUX_AI_SUMMARIZE_TMPDIR/client.typescript"
   runner_path="$repo_root/scripts/summarize-selection.zsh"
-  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
+  TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-$$-${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
+  tmux_wrapper_dir=$TMUX_AI_SUMMARIZE_WRAPPER_DIR
+  tmux_socket_name=$TMUX_AI_SUMMARIZE_SOCKET
+  log_path=$log_file
+  transcript_path=$transcript
 
-  trap cleanup_detached_cleanup EXIT INT TERM
+  trap teardown_scenario EXIT INT TERM
 
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" -f /dev/null new-session -d -s test 'printf "   \nnon-whitespace line\n"; sleep 1000' >/dev/null
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-option -g mode-keys vi
@@ -699,129 +437,41 @@ whitespace_only() {
 #!/usr/bin/env zsh
 
 emulate -L zsh
-set -u
+set -eu
 
-wrapper_dir=$1
-socket_name=$2
-transcript_file=$3
-launcher_path=$4
-log_file=$5
+helper_path=$1
+source "$helper_path"
 
-fail() {
-  print -u2 -r -- "FAIL: $1"
-  exit 1
-}
+tmux_wrapper_dir=$2
+tmux_socket_name=$3
+transcript_path=$4
+launcher_path=$5
+log_path=$6
 
-tmux_cmd() {
-  PATH="$wrapper_dir:$PATH" tmux -L "$socket_name" "$@"
-}
+trap 'stop_attached_client' EXIT INT TERM
 
-wait_for_fresh_buffer() {
-  local timeout=50
-  local buffer_name
-
-  while (( timeout > 0 )); do
-    buffer_name=$(tmux_cmd list-buffers -F '#{buffer_name}' 2>/dev/null | rg '^ai-summarize-' | head -1 || true)
-    if [[ -n $buffer_name ]]; then
-      print -r -- "$buffer_name"
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_buffer_removal() {
-  local buffer_name=$1
-  local timeout=50
-  local buffers
-
-  while (( timeout > 0 )); do
-    buffers=$(tmux_cmd list-buffers -F '#{buffer_name}' 2>/dev/null || true)
-    if ! print -r -- "$buffers" | rg -Fxq -- "$buffer_name"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-normalize_transcript() {
-  cat "$transcript_file" 2>/dev/null | perl -0pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g; s/\r/\n/g; s/\x0f|\x0e//g'
-}
-
-wait_for_log_line() {
-  local pattern=$1
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(cat "$log_file" 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-wait_for_transcript_pattern() {
-  local pattern=$1
-  local timeout=50
-  local content
-
-  while (( timeout > 0 )); do
-    content=$(normalize_transcript 2>/dev/null || true)
-    if print -r -- "$content" | rg -q -- "$pattern"; then
-      return 0
-    fi
-    sleep 0.1
-    (( timeout-- ))
-  done
-
-  return 1
-}
-
-input_fifo=$(mktemp -u "${TMPDIR:-/tmp}/tmux-ai-summarize-input.XXXXXX")
-mkfifo "$input_fifo"
-TERM="${TERM:-screen-256color}" PATH="$wrapper_dir:$PATH" script -qefc "TERM=screen-256color tmux -L $socket_name attach-session -t test" "$transcript_file" < "$input_fifo" >/dev/null 2>&1 &
-client_driver_pid=$!
-exec {input_fd}> "$input_fifo"
-trap 'exec {input_fd}>&-; rm -f "$input_fifo"; kill "$client_driver_pid" >/dev/null 2>&1 || true; wait "$client_driver_pid" 2>/dev/null || true' EXIT INT TERM
-
-client_name=
-for _ in {1..50}; do
-  client_name=$(tmux_cmd list-clients -F '#{client_name}' 2>/dev/null | head -1 || true)
-  [[ -n $client_name ]] && break
-  sleep 0.1
-done
-[[ -n $client_name ]] || fail "attached client never appeared"
+start_attached_client test
+client_name=$(find_attached_client_name) || fail_test "attached client never appeared"
 quoted_client_name=$(printf '%q' "$client_name")
 quoted_launcher_path=$(printf '%q' "$launcher_path")
 
-pane=$(tmux_cmd display-message -p -t test:0.0 '#{pane_id}')
-tmux_cmd copy-mode -t "$pane"
-tmux_cmd send-keys -t "$pane" -X history-top
-tmux_cmd send-keys -t "$pane" -X select-line
-tmux_cmd send-keys -t "$pane" -X copy-selection-and-cancel ai-summarize-
+pane=$(tmux_test_cmd display-message -p -t test:0.0 '#{pane_id}')
+tmux_test_cmd copy-mode -t "$pane"
+tmux_test_cmd send-keys -t "$pane" -X history-top
+tmux_test_cmd send-keys -t "$pane" -X select-line
+tmux_test_cmd send-keys -t "$pane" -X copy-selection-and-cancel ai-summarize-
 
-fresh_buffer_name=$(wait_for_fresh_buffer) || fail "whitespace-only copy-mode path did not create a fresh prefixed buffer"
-tmux_cmd run-shell -b "TMUX_AI_SUMMARIZE_CLIENT=$quoted_client_name $quoted_launcher_path"
+fresh_buffer_name=$(wait_for_fresh_buffer) || fail_test "whitespace-only copy-mode path did not create a fresh prefixed buffer"
+tmux_test_cmd run-shell -b "TMUX_AI_SUMMARIZE_CLIENT=$quoted_client_name $quoted_launcher_path"
 
-wait_for_log_line '^display-popup ' || fail "whitespace-only path did not launch a popup"
-wait_for_transcript_pattern 'Nothing to summarize\.' || fail "whitespace-only popup did not render the expected message"
-wait_for_buffer_removal "$fresh_buffer_name" || fail "whitespace-only path did not delete the selected buffer"
+wait_for_log_line '^display-popup ' || fail_test "whitespace-only path did not launch a popup"
+wait_for_transcript_pattern 'Nothing to summarize\.' || fail_test "whitespace-only popup did not render the expected message"
+wait_for_buffer_removal "$fresh_buffer_name" || fail_test "whitespace-only path did not delete the selected buffer"
 EOF
   chmod +x "$driver_script"
-  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file"
+  zsh "$driver_script" "$driver_helpers_path" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file"
 
-  cleanup_detached_cleanup
+  teardown_scenario
   trap - EXIT INT TERM
 }
 
@@ -831,22 +481,22 @@ usage() {
 
 case "${1:-all}" in
   attached_mock)
-    attached_client_mock
+    run_attached_client_scenario
     ;;
   detached_cleanup)
-    detached_cleanup
+    run_detached_cleanup_scenario
     ;;
   no_selection)
-    no_selection
+    run_no_selection_scenario
     ;;
   whitespace_only)
-    whitespace_only
+    run_whitespace_only_scenario
     ;;
   all)
-    attached_client_mock
-    detached_cleanup
-    no_selection
-    whitespace_only
+    run_attached_client_scenario
+    run_detached_cleanup_scenario
+    run_no_selection_scenario
+    run_whitespace_only_scenario
     ;;
   *)
     usage
