@@ -95,4 +95,6 @@ run '~/.tmux/plugins/tpm/tpm'
 
 `./test/integration.sh` runs the mock harness by default. The live-provider path uses the same harness with `TMUX_AI_SUMMARIZE_PROVIDER_MODE=live`.
 
+The GitHub `Live Provider` workflow requires a repo or org `OPENAI_API_KEY` secret. If it is missing, the workflow fails.
+
 The repo does not publish GitHub Releases. Release flow is simple: keep `main` green, run the live-provider workflow on `main`, then create a semver tag like `v0.1.0`.
