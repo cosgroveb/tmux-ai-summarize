@@ -1,5 +1,7 @@
 # tmux-ai-summarize
 
+[![CI](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml/badge.svg)](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml)
+
 `tmux-ai-summarize` adds one copy-mode action to tmux: press `S` in `copy-mode-vi`, copy the current selection into the normal tmux buffer stack, and open a popup with a short bullet summary from an OpenAI-compatible API.
 
 The popup is read-only. You can enter copy mode inside it and copy the summary out.
