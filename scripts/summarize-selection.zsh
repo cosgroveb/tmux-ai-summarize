@@ -3,7 +3,6 @@
 emulate -L zsh
 
 script_dir=${0:A:h}
-# shellcheck source=./lib.zsh
 source "$script_dir/lib.zsh"
 
 client_name=${TMUX_AI_SUMMARIZE_CLIENT:-}

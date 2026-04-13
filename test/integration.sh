@@ -178,8 +178,8 @@ wait_for_fresh_buffer() {
 normalize_transcript() {
   local transcript_file=$1
 
-  # shellcheck disable=SC2002
-  cat "$transcript_file" 2>/dev/null | perl -0pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g; s/\r/\n/g; s/\x0f|\x0e//g'
+  [[ -r $transcript_file ]] || return 0
+  perl -0pe 's/\e\[[0-9;?]*[ -\/]*[@-~]//g; s/\e\][^\a]*(?:\a|\e\\)//g; s/\r/\n/g; s/\x0f|\x0e//g' -- "$transcript_file"
 }
 
 wait_for_transcript_pattern() {

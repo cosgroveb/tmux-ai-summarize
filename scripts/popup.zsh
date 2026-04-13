@@ -3,7 +3,6 @@
 emulate -L zsh
 
 script_dir=${0:A:h}
-# shellcheck source=./lib.zsh
 source "$script_dir/lib.zsh"
 
 hold_popup_open() {
