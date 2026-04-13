@@ -44,13 +44,16 @@ Set your API key. Everything else has sensible defaults.
 
 Plugin-specific env vars take priority over `OPENAI_*` vars. `OPENAI_*` vars take priority over tmux options.
 
-| Setting | Env var | Fallback env var | Tmux option | Default |
-|---------|---------|------------------|-------------|---------|
-| API key | `TMUX_AI_SUMMARIZE_API_KEY` | `OPENAI_API_KEY` | `@ai-summarize-api-key` | - |
-| Base URL | `TMUX_AI_SUMMARIZE_BASE_URL` | `OPENAI_BASE_URL` | `@ai-summarize-base-url` | `https://api.openai.com/v1` |
-| Model | `TMUX_AI_SUMMARIZE_MODEL` | - | `@ai-summarize-model` | `gpt-5.4-nano` |
-| Prompt | - | - | `@ai-summarize-prompt` | built-in |
-| Key | - | - | `@ai-summarize-key` | `S` |
+- API key:
+  `TMUX_AI_SUMMARIZE_API_KEY`, then `OPENAI_API_KEY`, then `@ai-summarize-api-key`
+- Base URL:
+  `TMUX_AI_SUMMARIZE_BASE_URL`, then `OPENAI_BASE_URL`, then `@ai-summarize-base-url`, default `https://api.openai.com/v1`
+- Model:
+  `TMUX_AI_SUMMARIZE_MODEL`, then `@ai-summarize-model`, default `gpt-5.4-nano`
+- Prompt:
+  `@ai-summarize-prompt`, default built-in prompt
+- Key:
+  `@ai-summarize-key`, default `S`
 
 Set tmux options in `tmux.conf` with `set -g`:
 
