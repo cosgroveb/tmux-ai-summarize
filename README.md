@@ -63,3 +63,5 @@ For a local or proxy API:
 set -g @ai-summarize-base-url 'http://localhost:8000/v1'
 set -g @ai-summarize-api-key 'dummy-key'
 ```
+
+TODO: Support emacs copy mode too.
