@@ -1,6 +1,6 @@
 # tmux-ai-summarize
 
-[![CI](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml/badge.svg)](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml)
+[![CI](https://github.com/cosgroveb/tmux-ai-summarize/actions/workflows/ci.yml/badge.svg)](https://github.com/cosgroveb/tmux-ai-summarize/actions/workflows/ci.yml)
 
 Press `S` in copy mode. tmux copies the text. You get an AI summary in a popup.
 
@@ -19,7 +19,7 @@ If you already use TPM, add this to `tmux.conf`:
 
 ```tmux
 set -g mode-keys vi
-set -g @plugin 'clnkr-ai/tmux-ai-summarize'
+set -g @plugin 'cosgroveb/tmux-ai-summarize'
 set -g @ai-summarize-key 'S'
 # set -g @ai-summarize-model 'gpt-5.4-nano' # default
 ```
