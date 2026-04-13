@@ -6,6 +6,8 @@ Press `S` in copy mode. tmux copies the text. You get an AI summary in a popup.
 
 The popup stays open. Enter copy mode there if you want to copy the summary back out.
 
+![alacritty-2026-04-12-233926](https://github.com/user-attachments/assets/5f9fb67b-8063-4c05-a19d-d13576200860)
+
 ## Requirements
 
 - `tmux >= 3.2`
