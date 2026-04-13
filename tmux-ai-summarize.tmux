@@ -32,7 +32,7 @@ main() {
   fi
   tmux unbind-key -T copy-mode-vi "$key" 2>/dev/null || true
   tmux source-file - <<EOF
-bind-key -T copy-mode-vi $key send-keys -X copy-selection-no-clear \; send-keys -X copy-selection-and-cancel ai-summarize- \; run-shell "TMUX_AI_SUMMARIZE_CLIENT=#{q:client_name} $quoted_runner_path"
+bind-key -T copy-mode-vi $key send-keys -X copy-selection-no-clear \; send-keys -X copy-selection-and-cancel "ai-summarize-#{pane_id}-" \; run-shell "TMUX_AI_SUMMARIZE_CLIENT=#{q:client_name} TMUX_AI_SUMMARIZE_BUFFER_SCOPE=#{q:pane_id} $quoted_runner_path"
 EOF
   tmux set-option -gq @ai-summarize-installed-key "$key"
 }

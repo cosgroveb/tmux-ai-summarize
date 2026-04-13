@@ -54,6 +54,17 @@ resolve_prompt() {
   default_summary_prompt
 }
 
+resolve_buffer_prefix() {
+  local buffer_scope=${TMUX_AI_SUMMARIZE_BUFFER_SCOPE:-}
+
+  if [[ -n $buffer_scope ]]; then
+    print -r -- "ai-summarize-$buffer_scope-"
+    return 0
+  fi
+
+  print -r -- 'ai-summarize-'
+}
+
 render_popup_text() {
   print -n -- $'\033[2J\033[H'
   print -r -- "$1"
@@ -90,13 +101,15 @@ extract_summary_content() {
 
 latest_ai_summarize_buffer() {
   local fresh_window_seconds=${1:-2}
+  local buffer_prefix
   local buffer_name freshest_buffer='' candidate_tail freshest_tail
   integer buffer_created newest_created=-1 now age
 
   now=${EPOCHSECONDS:-$(date +%s)}
+  buffer_prefix=$(resolve_buffer_prefix)
 
   while IFS='|' read -r buffer_name buffer_created; do
-    if [[ $buffer_name == ai-summarize-* ]]; then
+    if [[ ${buffer_name#$buffer_prefix} != "$buffer_name" ]]; then
       (( age = now - buffer_created ))
       if (( age >= 0 && age <= fresh_window_seconds )); then
         if (( buffer_created > newest_created )); then

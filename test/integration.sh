@@ -331,7 +331,7 @@ attached_client_mock() {
 
   binding=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-keys -T copy-mode-vi S)
   print -r -- "$binding" | rg -Fq -- 'copy-selection-no-clear' || fail "plugin entrypoint did not preserve tmux copy behavior"
-  print -r -- "$binding" | rg -Fq -- 'copy-selection-and-cancel ai-summarize-' || fail "plugin entrypoint did not install copy-mode copy behavior"
+  print -r -- "$binding" | rg -Fq -- 'copy-selection-and-cancel "ai-summarize-#{pane_id}-"' || fail "plugin entrypoint did not scope copy-mode buffers to the pane"
   print -r -- "$binding" | rg -Fq -- 'run-shell' || fail "plugin entrypoint did not install the runner"
   print -r -- "$binding" | rg -Fq -- "$repo_root/scripts/summarize-selection.zsh" || fail "binding does not point at the repo runner"
 
@@ -491,57 +491,44 @@ EOF
 detached_cleanup() {
   print -u2 -r -- "scenario: detached cleanup path"
 
-  local log_file pane buffers runner_path quoted_runner_path buffer_name older_fresh_buffer newer_fresh_buffer
+  local log_file pane runner_path quoted_runner_path pane_scope quoted_pane_scope scoped_buffer_name
   TMUX_AI_SUMMARIZE_SCENARIO='detached-cleanup'
   TMUX_AI_SUMMARIZE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize.XXXXXX")
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   runner_path="$repo_root/scripts/summarize-selection.zsh"
   TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
-  export TMUX_AI_SUMMARIZE_REVERSE_LIST_BUFFERS=1
 
   trap cleanup_detached_cleanup EXIT INT TERM
 
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" -f /dev/null new-session -d -s test 'printf "hello world\n"; sleep 1000' >/dev/null
   pane=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" display-message -p -t test:0.0 '#{pane_id}')
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-buffer -b ai-summarize-stale 'stale selection'
+  pane_scope=$pane
+  quoted_pane_scope=$(printf '%q' "$pane_scope")
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-buffer -b 'ai-summarize-%999-stale' 'stale selection'
   sleep 11
   quoted_runner_path=$(printf '%q' "$runner_path")
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "$quoted_runner_path"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "TMUX_AI_SUMMARIZE_BUFFER_SCOPE=$quoted_pane_scope $quoted_runner_path"
   wait_for_log_line "$log_file" '^display-message .*Nothing selected\.' || fail "stale-only prefixed buffer should fall through to Nothing selected"
   rg -q '^display-popup ' "$log_file" && fail "stale-only prefixed buffer should not launch popup"
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-stale' || fail "stale-only prefixed buffer should not be consumed"
-  for _ in 1 2; do
-    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" copy-mode -t "$pane"
-    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X history-top
-    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X select-line
-    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X copy-selection-and-cancel ai-summarize-
-  done
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-stale' || fail "stale-only foreign prefixed buffer should not be consumed"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" copy-mode -t "$pane"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X history-top
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X select-line
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X copy-selection-and-cancel "ai-summarize-$pane_scope-"
+  scoped_buffer_name=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg "^ai-summarize-$(printf '%s' "$pane_scope" | sed 's/[.[\\*^$()+?{|]/\\\\&/g')-" | head -1 || true)
+  [[ -n $scoped_buffer_name ]] || fail "expected copy-mode to create a pane-scoped prefixed buffer"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-buffer -b 'ai-summarize-%999-fresh' 'wrong selection'
 
-  buffers=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}|#{buffer_created}')
-  older_fresh_buffer=
-  newer_fresh_buffer=
-  while IFS='|' read -r buffer_name _buffer_created; do
-    [[ $buffer_name == ai-summarize-* ]] || continue
-    if [[ -z $newer_fresh_buffer ]]; then
-      newer_fresh_buffer=$buffer_name
-    elif [[ -z $older_fresh_buffer ]]; then
-      older_fresh_buffer=$buffer_name
-      break
-    fi
-  done <<< "$buffers"
-  [[ -n $newer_fresh_buffer && -n $older_fresh_buffer ]] || fail "expected copy-mode to create two fresh prefixed buffers"
-
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "$quoted_runner_path"
-  wait_for_buffer_removal "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$newer_fresh_buffer" || fail "newest fresh prefixed buffer was not deleted after popup launch failed"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "TMUX_AI_SUMMARIZE_BUFFER_SCOPE=$quoted_pane_scope $quoted_runner_path"
+  wait_for_buffer_removal "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$scoped_buffer_name" || fail "pane-scoped prefixed buffer was not deleted after popup launch failed"
   wait_for_log_line "$log_file" '^display-popup ' || fail "runner never attempted popup"
   wait_for_log_line "$log_file" '^display-message .*Popup launch failed\.' || fail "runner did not fall back to a status-line message"
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- "$older_fresh_buffer" || fail "older fresh prefixed buffer should remain when two fresh buffers share the same timestamp"
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-stale' || fail "stale-only prefixed buffer should remain"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-fresh' || fail "foreign fresh prefixed buffer should remain"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-stale' || fail "stale-only foreign prefixed buffer should remain"
 
   cleanup_detached_cleanup
   trap - EXIT INT TERM
-  unset TMUX_AI_SUMMARIZE_REVERSE_LIST_BUFFERS
 }
 
 no_selection() {
