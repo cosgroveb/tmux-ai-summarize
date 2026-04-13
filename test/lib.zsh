@@ -121,13 +121,13 @@ wait_for_live_summary() {
   # Poll for up to 20 seconds so slower live-provider runs still surface a reason on failure.
   while (( timeout > 0 )); do
     content=$(normalize_transcript 2>/dev/null || true)
-    reason=$(print -r -- "$content" | rg -o -- 'Nothing selected\.|Nothing to summarize\.|Missing API key\.[^\n]*|Request failed[^\n]*|Request timed out\.|Provider returned no summary content\.' | head -n 1 || true)
+    reason=$(print -r -- "$content" | rg -o -- 'Nothing selected\.|Nothing to summarize\.|Missing API key\..*|Request failed.*|Request timed out\.|Provider returned no summary content\.' | head -n 1 || true)
     if [[ -n $reason ]]; then
       reason="live summary failed early: $reason"
       print -u2 -r -- "$reason"
       return 1
     fi
-    if print -r -- "$content" | rg -q -- '(^|\n)[-*] '; then
+    if print -r -- "$content" | rg -q -- '^[*-] '; then
       return 0
     fi
     sleep 0.1
@@ -141,13 +141,16 @@ wait_for_live_summary() {
 
 start_attached_client() {
   local session_name=${1:-test}
+  local quoted_tmux_socket_name quoted_session_name
 
   attached_client_pipe_dir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize-input.XXXXXX")
   attached_client_pipe_path="$attached_client_pipe_dir/input"
   mkfifo "$attached_client_pipe_path"
+  quoted_tmux_socket_name=$(printf '%q' "$tmux_socket_name")
+  quoted_session_name=$(printf '%q' "$session_name")
 
   TERM="${TERM:-screen-256color}" PATH="$tmux_wrapper_dir:$PATH" \
-    script -qefc "TERM=screen-256color tmux -L $tmux_socket_name attach-session -t $session_name" \
+    script -qefc "TERM=screen-256color tmux -L $quoted_tmux_socket_name attach-session -t $quoted_session_name" \
     "$transcript_path" < "$attached_client_pipe_path" >/dev/null 2>&1 &
   attached_client_pid=$!
   exec {attached_client_input_fd}> "$attached_client_pipe_path"

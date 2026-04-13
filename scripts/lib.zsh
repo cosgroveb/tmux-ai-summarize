@@ -1,6 +1,7 @@
 #!/usr/bin/env zsh
 
 typeset -gr summary_buffer_fresh_window_seconds=2
+typeset -gr default_summary_model='gpt-5.4-nano'
 
 default_summary_prompt() {
   emulate -L zsh
@@ -44,7 +45,7 @@ resolve_model() {
     return 0
   fi
 
-  get_tmux_option '@ai-summarize-model' 'gpt-5.4-nano'
+  get_tmux_option '@ai-summarize-model' "$default_summary_model"
 }
 
 resolve_prompt() {

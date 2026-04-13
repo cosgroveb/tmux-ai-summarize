@@ -284,7 +284,7 @@ EOF
     jq -e '.path == "/v1/chat/completions"' "$request_log" >/dev/null || fail "request path was not /v1/chat/completions"
     jq -e '.headers.Authorization == "Bearer test-key"' "$request_log" >/dev/null || fail "request did not include the Authorization header"
     actual_model=$(jq -r '.body.model // "<missing>"' "$request_log")
-    [[ $actual_model == 'gpt-5.4-nano' ]] || fail "request used model $actual_model instead of gpt-5.4-nano"
+    [[ $actual_model == "$default_summary_model" ]] || fail "request used model $actual_model instead of $default_summary_model"
     jq -e '.body.messages[0].role == "system"' "$request_log" >/dev/null || fail "request did not include the system prompt"
     actual_user_content=$(jq -r '.body.messages[1].content // "<missing>"' "$request_log")
     print -r -- "$actual_user_content" | rg -Fq -- "$fixture_text" || fail "request user content was: $actual_user_content"
@@ -328,7 +328,7 @@ run_detached_cleanup_scenario() {
   quoted_runner_path=$(printf '%q' "$runner_path")
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "TMUX_AI_SUMMARIZE_BUFFER_SCOPE=$quoted_pane_scope $quoted_runner_path"
   wait_for_log_line '^display-message .*Nothing selected\.' || fail "stale-only prefixed buffer should fall through to Nothing selected"
-  rg -q '^display-popup ' "$log_file" && fail "stale-only prefixed buffer should not launch popup"
+  rg -q '^display-popup ' "$log_file" 2>/dev/null && fail "stale-only prefixed buffer should not launch popup"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-%999-stale' || fail "stale-only foreign prefixed buffer should not be consumed"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" copy-mode -t "$pane"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" send-keys -t "$pane" -X history-top
