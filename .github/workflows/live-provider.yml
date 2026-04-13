@@ -1,0 +1,65 @@
+name: Live Provider
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  integration-live:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check live provider configuration
+        id: config
+        run: |
+          if [ -z "${OPENAI_API_KEY}" ]; then
+            echo "Live provider run skipped: OPENAI_API_KEY secret is not set."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - uses: actions/checkout@v5
+        if: steps.config.outputs.configured == 'true'
+
+      - name: Install integration dependencies
+        if: steps.config.outputs.configured == 'true'
+        run: sudo apt-get update && sudo apt-get install -y tmux zsh curl jq ripgrep bsdutils python3 perl
+
+      - name: Run live integration harness
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/live-provider-artifacts"
+          : "${OPENAI_BASE_URL:=https://api.openai.com/v1}"
+          : "${TMUX_AI_SUMMARIZE_MODEL:=gpt-5.4-nano}"
+          export OPENAI_API_KEY
+          export OPENAI_BASE_URL
+          export TMUX_AI_SUMMARIZE_MODEL
+          export TMUX_AI_SUMMARIZE_PROVIDER_MODE=live
+          export TMUX_AI_SUMMARIZE_ARTIFACT_DIR="$RUNNER_TEMP/live-provider-artifacts"
+          ./test/integration.sh
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          TMUX_AI_SUMMARIZE_MODEL: ${{ vars.TMUX_AI_SUMMARIZE_MODEL }}
+
+      - name: Show live artifacts on failure
+        if: failure() && steps.config.outputs.configured == 'true'
+        run: |
+          find "$RUNNER_TEMP/live-provider-artifacts" -maxdepth 3 -type f | sort || true
+          find "$RUNNER_TEMP/live-provider-artifacts" -type f | sort | while IFS= read -r file; do
+            echo
+            echo "== $file =="
+            sed -n '1,200p' "$file" || true
+          done
+
+      - name: Upload live artifacts
+        if: always() && steps.config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-provider-${{ github.run_id }}
+          path: ${{ runner.temp }}/live-provider-artifacts/
+          if-no-files-found: warn
+          retention-days: 14

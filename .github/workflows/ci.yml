@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install lint dependencies
+        run: sudo apt-get update && sudo apt-get install -y shellcheck zsh
+
+      - name: Shellcheck plugin entrypoint
+        run: shellcheck -s bash tmux-ai-summarize.tmux
+
+      - name: Syntax check zsh files
+        run: zsh -n tmux-ai-summarize.tmux scripts/*.zsh test/integration.sh
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install integration dependencies
+        run: sudo apt-get update && sudo apt-get install -y tmux zsh curl jq ripgrep bsdutils python3 perl
+
+      - name: Run integration harness
+        run: ./test/integration.sh
