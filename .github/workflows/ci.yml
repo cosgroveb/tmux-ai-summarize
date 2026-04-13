@@ -13,10 +13,13 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Install lint dependencies
-        run: sudo apt-get update && sudo apt-get install -y zsh
+        run: sudo apt-get update && sudo apt-get install -y zsh ripgrep
 
       - name: Syntax check zsh files
-        run: zsh -n tmux-ai-summarize.tmux scripts/*.zsh test/integration.sh
+        run: zsh -n tmux-ai-summarize.tmux scripts/*.zsh test/*.zsh
+
+      - name: Check harness regressions
+        run: zsh ./test/harness-regressions.sh
 
   integration:
     runs-on: ubuntu-latest

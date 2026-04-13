@@ -22,18 +22,13 @@ set -g mode-keys vi
 set -g @plugin 'clnkr-ai/tmux-ai-summarize'
 set -g @ai-summarize-key 'S'
 # set -g @ai-summarize-model 'gpt-5.4-nano' # default
-run '~/.tmux/plugins/tpm/tpm'
 ```
-
-`run '~/.tmux/plugins/tpm/tpm'` is TPM's own line. Keep it at the bottom of `tmux.conf`.
 
 If tmux is already running, reload your config:
 
 ```sh
 tmux source-file ~/.tmux.conf
 ```
-
-Use the path to your `tmux.conf` if it lives somewhere else.
 
 Install the plugin with `prefix` + `I`. From the shell, `~/.tmux/plugins/tpm/bin/install_plugins` does the same thing.
 
