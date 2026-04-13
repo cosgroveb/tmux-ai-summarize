@@ -127,7 +127,8 @@ wait_for_live_summary() {
       print -u2 -r -- "$reason"
       return 1
     fi
-    if print -r -- "$content" | rg -q -- '^[*-] '; then
+    # Popup transcripts can keep border or margin characters ahead of the bullet line.
+    if print -r -- "$content" | rg -q -- '^[^[:alnum:]]*[*-] [^[:space:]]'; then
       return 0
     fi
     sleep 0.1
