@@ -1,17 +1,19 @@
 #!/usr/bin/env zsh
 
 emulate -L zsh
+set -eu
 
 script_dir=${0:A:h}
 source "$script_dir/lib.zsh"
 
-hold_popup_open() {
+hold_open_and_exit() {
+  # Replaces this shell with cat so the popup stays open.
   exec cat >/dev/null
 }
 
 if [[ ${1:-} == --message ]]; then
   render_popup_text "${2:-}"
-  hold_popup_open
+  hold_open_and_exit
 fi
 
 source_buffer=${1:-}
@@ -28,8 +30,9 @@ trap cleanup_source_buffer EXIT HUP INT TERM
 
 if [[ -n $source_buffer ]]; then
   if ! buffer_text=$(tmux show-buffer -b "$source_buffer" 2>/dev/null); then
+    cleanup_source_buffer
     render_popup_text 'Failed to read tmux buffer.'
-    hold_popup_open
+    hold_open_and_exit
   fi
   cleanup_source_buffer
 fi
@@ -37,20 +40,32 @@ fi
 stripped_text=${buffer_text//[[:space:]]/}
 if [[ -z $stripped_text ]]; then
   render_popup_text 'Nothing to summarize.'
-  hold_popup_open
+  hold_open_and_exit
 fi
 
 render_popup_text 'Summarizing...'
 
-api_key=$(resolve_api_key)
+api_key=$(resolve_api_key) || {
+  render_popup_text 'Failed to read API key configuration.'
+  hold_open_and_exit
+}
 if [[ -z $api_key ]]; then
   render_popup_text 'Missing API key. Set OPENAI_API_KEY or @ai-summarize-api-key.'
-  hold_popup_open
+  hold_open_and_exit
 fi
 
-base_url=$(resolve_base_url)
-model=$(resolve_model)
-prompt=$(resolve_prompt)
+base_url=$(resolve_base_url) || {
+  render_popup_text 'Failed to read base URL configuration.'
+  hold_open_and_exit
+}
+model=$(resolve_model) || {
+  render_popup_text 'Failed to read model configuration.'
+  hold_open_and_exit
+}
+prompt=$(resolve_prompt) || {
+  render_popup_text 'Failed to read prompt configuration.'
+  hold_open_and_exit
+}
 
 request_body=$(
   jq -n \
@@ -72,23 +87,24 @@ request_body=$(
     }'
 ) || {
   render_popup_text 'Failed to build request body.'
-  hold_popup_open
+  hold_open_and_exit
 }
 
 if [[ -n ${TMUX_AI_SUMMARIZE_REQUEST_LOG:-} ]]; then
   jq -n \
     --arg url "${base_url%/}/chat/completions" \
-    --arg request_body_json "$request_body" \
+    --argjson body "$request_body" \
     '{
       url: $url,
       headers: {
         Authorization: "Bearer <redacted>",
         "Content-Type": "application/json"
       },
-      body: ($request_body_json | fromjson)
+      body: $body
     }' >"$TMUX_AI_SUMMARIZE_REQUEST_LOG" 2>/dev/null || true
 fi
 
+curl_status=0
 curl_output=$(
   curl \
     --silent \
@@ -99,15 +115,14 @@ curl_output=$(
     --header 'Content-Type: application/json' \
     --data "$request_body" \
     "${base_url%/}/chat/completions"
-) 
-curl_status=$?
+) || curl_status=$?
 if (( curl_status != 0 )); then
   if (( curl_status == 28 )); then
     render_popup_text 'Request timed out.'
   else
     render_popup_text 'Request failed.'
   fi
-  hold_popup_open
+  hold_open_and_exit
 fi
 
 response_body=${curl_output%$'\n'"${status_sentinel}"*}
@@ -119,13 +134,13 @@ if [[ $http_status != 2* ]]; then
   else
     render_popup_text "Request failed: HTTP $http_status"
   fi
-  hold_popup_open
+  hold_open_and_exit
 fi
 
 summary_text=$(print -r -- "$response_body" | extract_summary_content) || {
   render_popup_text 'Provider returned no summary content.'
-  hold_popup_open
+  hold_open_and_exit
 }
 
 render_popup_text "$summary_text"
-hold_popup_open
+hold_open_and_exit

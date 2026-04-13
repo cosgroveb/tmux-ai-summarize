@@ -1,21 +1,22 @@
 #!/usr/bin/env zsh
 
 emulate -L zsh
+set -eu
 
 script_dir=${0:A:h}
 source "$script_dir/lib.zsh"
 
 client_name=${TMUX_AI_SUMMARIZE_CLIENT:-}
 client_flag=()
-message_text=
 popup_runner=$(printf '%q' "$script_dir/popup.zsh")
+fresh_buffer_window_seconds=$summary_buffer_fresh_window_seconds
 if [[ -n $client_name ]]; then
   client_flag=(-c "$client_name")
 fi
 
-selected_buffer=$(latest_ai_summarize_buffer 2) || {
-  message_text='Nothing selected.'
-  popup_command="$popup_runner --message $(printf '%q' "$message_text")"
+selected_buffer=$(latest_ai_summarize_buffer "$fresh_buffer_window_seconds") || {
+  popup_command="$popup_runner --message $(printf '%q' 'Nothing selected.')"
+  # Without a client there is nowhere to open a popup, so fall back to the status line.
   if [[ -n $client_name ]] && tmux display-popup "${client_flag[@]}" -T 'AI Summary' -w 70% -h 60% "$popup_command"; then
     exit 0
   fi

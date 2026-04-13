@@ -1,12 +1,14 @@
 #!/usr/bin/env zsh
 
-emulate -L zsh
+typeset -gr summary_buffer_fresh_window_seconds=2
 
 default_summary_prompt() {
+  emulate -L zsh
   print -r -- 'Summarize the provided text as concise bullet points. Use plain language. Keep important names, commands, paths, flags, and numbers. Do not add preamble, conclusion, or markdown fencing.'
 }
 
 get_tmux_option() {
+  emulate -L zsh
   local name=$1
   local fallback=${2:-}
   local value
@@ -16,6 +18,7 @@ get_tmux_option() {
 }
 
 resolve_api_key() {
+  emulate -L zsh
   if [[ -n ${OPENAI_API_KEY:-} ]]; then
     print -r -- "$OPENAI_API_KEY"
     return 0
@@ -25,6 +28,7 @@ resolve_api_key() {
 }
 
 resolve_base_url() {
+  emulate -L zsh
   if [[ -n ${OPENAI_BASE_URL:-} ]]; then
     print -r -- "$OPENAI_BASE_URL"
     return 0
@@ -34,6 +38,7 @@ resolve_base_url() {
 }
 
 resolve_model() {
+  emulate -L zsh
   if [[ -n ${TMUX_AI_SUMMARIZE_MODEL:-} ]]; then
     print -r -- "$TMUX_AI_SUMMARIZE_MODEL"
     return 0
@@ -43,6 +48,7 @@ resolve_model() {
 }
 
 resolve_prompt() {
+  emulate -L zsh
   local prompt_override
 
   prompt_override=$(get_tmux_option '@ai-summarize-prompt' '')
@@ -55,6 +61,7 @@ resolve_prompt() {
 }
 
 resolve_buffer_prefix() {
+  emulate -L zsh
   local buffer_scope=${TMUX_AI_SUMMARIZE_BUFFER_SCOPE:-}
 
   if [[ -n $buffer_scope ]]; then
@@ -66,19 +73,21 @@ resolve_buffer_prefix() {
 }
 
 render_popup_text() {
+  emulate -L zsh
   print -n -- $'\033[2J\033[H'
   print -r -- "$1"
 }
 
 single_line_excerpt() {
+  emulate -L zsh
+  setopt extended_glob
   local excerpt=$1
 
   excerpt=${excerpt//$'\r'/ }
   excerpt=${excerpt//$'\n'/ }
   excerpt=${excerpt//$'\t'/ }
-  while [[ $excerpt == *'  '* ]]; do
-    excerpt=${excerpt//'  '/' '}
-  done
+  excerpt=${excerpt// ##/ }
+  # Collapsing above leaves at most one leading or trailing space.
   excerpt=${excerpt# }
   excerpt=${excerpt% }
 
@@ -86,6 +95,7 @@ single_line_excerpt() {
 }
 
 extract_summary_content() {
+  emulate -L zsh
   jq -er '
     .choices[0].message.content as $content
     | if ($content | type) == "string" then
@@ -100,16 +110,19 @@ extract_summary_content() {
 }
 
 latest_ai_summarize_buffer() {
-  local fresh_window_seconds=${1:-2}
+  emulate -L zsh
+  local fresh_window_seconds=${1:-$summary_buffer_fresh_window_seconds}
   local buffer_prefix
-  local buffer_name freshest_buffer='' candidate_tail freshest_tail
+  local buffer_name freshest_buffer='' buffer_created_text candidate_tail freshest_tail
   integer buffer_created newest_created=-1 now age
 
   now=${EPOCHSECONDS:-$(date +%s)}
   buffer_prefix=$(resolve_buffer_prefix)
 
-  while IFS='|' read -r buffer_name buffer_created; do
-    if [[ ${buffer_name#$buffer_prefix} != "$buffer_name" ]]; then
+  while IFS='|' read -r buffer_name buffer_created_text; do
+    if [[ $buffer_name == "$buffer_prefix"* ]]; then
+      [[ $buffer_created_text == <-> ]] || continue
+      buffer_created=$buffer_created_text
       (( age = now - buffer_created ))
       if (( age >= 0 && age <= fresh_window_seconds )); then
         if (( buffer_created > newest_created )); then
@@ -136,6 +149,7 @@ latest_ai_summarize_buffer() {
 }
 
 delete_ai_summarize_buffer() {
+  emulate -L zsh
   local buffer_name=$1
 
   [[ -n $buffer_name ]] || return 0
@@ -143,6 +157,7 @@ delete_ai_summarize_buffer() {
 }
 
 show_status_message() {
+  emulate -L zsh
   local message=$1
   local client_name=${2:-}
 
