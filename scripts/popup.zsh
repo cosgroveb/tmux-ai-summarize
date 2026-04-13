@@ -81,7 +81,7 @@ request_body=$(
         },
         {
           role: "user",
-          content: ("Text to summarize:\n\n" + $text)
+          content: ("<source_text>\n" + $text + "\n</source_text>")
         }
       ]
     }'
