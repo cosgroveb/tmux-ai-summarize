@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml/badge.svg)](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml)
 
-`tmux-ai-summarize` adds one copy-mode action to tmux: press `S` in `copy-mode-vi`, copy the current selection into the normal tmux buffer stack, and open a popup with a short bullet summary from an OpenAI-compatible API.
+Press `S` in `copy-mode-vi`, tmux copies the selection, then opens a popup with a short bullet summary from an OpenAI-compatible API.
 
-The popup is read-only. You can enter copy mode inside it and copy the summary out.
+The popup stays open. Enter copy mode there if you want to copy the summary back out.
 
-v1 binds only `copy-mode-vi`. Set `mode-keys` to `vi` if you are not already using it.
+v1 only binds `copy-mode-vi`. If you are not already using vi keys, set `mode-keys` to `vi`.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ set -g @ai-summarize-key 'S'
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Reload tmux, then install the plugin with TPM.
+Reload tmux. Then install the plugin with TPM.
 
 ## Manual install
 
@@ -44,7 +44,7 @@ Reload tmux after updating `tmux.conf`.
 2. Select text.
 3. Press `S`.
 
-tmux copies the selection first. The plugin then opens a popup, shows `Summarizing...`, and replaces it with bullet output.
+tmux copies first. The plugin opens a popup, prints `Summarizing...`, then swaps in bullet output.
 
 ## Configuration
 
@@ -72,11 +72,11 @@ Precedence:
 
 Default model: `gpt-5.4-nano`.
 
-## Compatible providers
+## OpenAI-Compatible Endpoints
 
-The plugin speaks OpenAI-compatible `POST /chat/completions`. By default it uses `https://api.openai.com/v1`.
+The plugin sends `POST /chat/completions` to an OpenAI-compatible endpoint. Default: `https://api.openai.com/v1`.
 
-For a compatible local or proxy endpoint:
+For a local or proxy endpoint:
 
 ```tmux
 set -g @ai-summarize-base-url 'http://localhost:8000/v1'
@@ -95,8 +95,8 @@ run '~/.tmux/plugins/tpm/tpm'
 
 ## Maintainer note
 
-`./test/integration.sh` runs the mock harness by default. The live-provider path uses the same harness with `TMUX_AI_SUMMARIZE_PROVIDER_MODE=live`.
+The default test path is mock-only. The live workflow runs the same harness with `TMUX_AI_SUMMARIZE_PROVIDER_MODE=live`.
 
 The GitHub `Live Provider` workflow requires a repo or org `OPENAI_API_KEY` secret. If it is missing, the workflow fails.
 
-The repo does not publish GitHub Releases. Release flow is simple: keep `main` green, run the live-provider workflow on `main`, then create a semver tag like `v0.1.0`.
+This repo does not publish GitHub Releases. Release flow: keep `main` green, run the live-provider workflow on `main`, then tag `v0.1.0`.

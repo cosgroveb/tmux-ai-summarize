@@ -7,17 +7,17 @@ script_dir=${0:A:h}
 source "$script_dir/lib.zsh"
 
 client_name=${TMUX_AI_SUMMARIZE_CLIENT:-}
-popup_target=()
-popup_message=
-popup_script=$(printf '%q' "$script_dir/popup.zsh")
+client_flag=()
+message_text=
+popup_runner=$(printf '%q' "$script_dir/popup.zsh")
 if [[ -n $client_name ]]; then
-  popup_target=(-c "$client_name")
+  client_flag=(-c "$client_name")
 fi
 
-buffer_name=$(latest_ai_summarize_buffer 2) || {
-  popup_message='Nothing selected.'
-  popup_command="$popup_script --message $(printf '%q' "$popup_message")"
-  if [[ -n $client_name ]] && tmux display-popup "${popup_target[@]}" -T 'AI Summary' -w 70% -h 60% "$popup_command"; then
+selected_buffer=$(latest_ai_summarize_buffer 2) || {
+  message_text='Nothing selected.'
+  popup_command="$popup_runner --message $(printf '%q' "$message_text")"
+  if [[ -n $client_name ]] && tmux display-popup "${client_flag[@]}" -T 'AI Summary' -w 70% -h 60% "$popup_command"; then
     exit 0
   fi
 
@@ -25,10 +25,10 @@ buffer_name=$(latest_ai_summarize_buffer 2) || {
   exit 0
 }
 
-popup_command="$popup_script $(printf '%q' "$buffer_name")"
-if tmux display-popup "${popup_target[@]}" -T 'AI Summary' -w 70% -h 60% "$popup_command"; then
+popup_command="$popup_runner $(printf '%q' "$selected_buffer")"
+if tmux display-popup "${client_flag[@]}" -T 'AI Summary' -w 70% -h 60% "$popup_command"; then
   exit 0
 fi
 
-delete_ai_summarize_buffer "$buffer_name"
+delete_ai_summarize_buffer "$selected_buffer"
 show_status_message 'Popup launch failed.' "$client_name"

@@ -279,7 +279,7 @@ attached_client_mock() {
   local live_base_url live_model
   local quoted_fixture
   local log_file transcript request_log='' port_file='' port='' binding driver_script actual_model actual_user_content
-  local launcher
+  local runner_path
 
   validate_provider_mode
   print -u2 -r -- "$scenario_label"
@@ -289,7 +289,7 @@ attached_client_mock() {
   TMUX_AI_SUMMARIZE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize.XXXXXX")
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   transcript="$TMUX_AI_SUMMARIZE_TMPDIR/client.typescript"
-  launcher="$repo_root/scripts/summarize-selection.zsh"
+  runner_path="$repo_root/scripts/summarize-selection.zsh"
   TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
 
@@ -332,8 +332,8 @@ attached_client_mock() {
   binding=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-keys -T copy-mode-vi S)
   print -r -- "$binding" | rg -Fq -- 'copy-selection-no-clear' || fail "plugin entrypoint did not preserve tmux copy behavior"
   print -r -- "$binding" | rg -Fq -- 'copy-selection-and-cancel ai-summarize-' || fail "plugin entrypoint did not install copy-mode copy behavior"
-  print -r -- "$binding" | rg -Fq -- 'run-shell' || fail "plugin entrypoint did not install the launcher"
-  print -r -- "$binding" | rg -Fq -- "$repo_root/scripts/summarize-selection.zsh" || fail "binding does not point at the repo launcher"
+  print -r -- "$binding" | rg -Fq -- 'run-shell' || fail "plugin entrypoint did not install the runner"
+  print -r -- "$binding" | rg -Fq -- "$repo_root/scripts/summarize-selection.zsh" || fail "binding does not point at the repo runner"
 
   driver_script="$TMUX_AI_SUMMARIZE_TMPDIR/attached-driver.zsh"
   cat >"$driver_script" <<'EOF'
@@ -459,7 +459,7 @@ tmux_cmd send-keys -t "$pane" -X history-top
 tmux_cmd send-keys -t "$pane" -X select-line
 print -n -- 'S' >&$input_fd
 
-wait_for_log_line '^display-popup ' || fail "launcher never attempted popup on attached client"
+wait_for_log_line '^display-popup ' || fail "runner never attempted popup on attached client"
 wait_for_log_line '^delete-buffer -b ai-summarize-' || fail "binding never consumed a fresh prefixed buffer"
 if [[ $provider_mode == mock ]]; then
   wait_for_loading_only '- concise point one' || fail "popup never showed an observable loading state before final output"
@@ -471,7 +471,7 @@ else
 fi
 EOF
   chmod +x "$driver_script"
-  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$launcher" "$log_file" "$provider_mode"
+  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file" "$provider_mode"
 
   if [[ $provider_mode == mock ]]; then
     jq -e '.path == "/v1/chat/completions"' "$request_log" >/dev/null || fail "request path was not /v1/chat/completions"
@@ -491,11 +491,11 @@ EOF
 detached_cleanup() {
   print -u2 -r -- "scenario: detached cleanup path"
 
-  local log_file pane buffers launcher quoted_launcher buffer_name older_fresh_buffer newer_fresh_buffer
+  local log_file pane buffers runner_path quoted_runner_path buffer_name older_fresh_buffer newer_fresh_buffer
   TMUX_AI_SUMMARIZE_SCENARIO='detached-cleanup'
   TMUX_AI_SUMMARIZE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize.XXXXXX")
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
-  launcher="$repo_root/scripts/summarize-selection.zsh"
+  runner_path="$repo_root/scripts/summarize-selection.zsh"
   TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
   export TMUX_AI_SUMMARIZE_REVERSE_LIST_BUFFERS=1
@@ -506,8 +506,8 @@ detached_cleanup() {
   pane=$(tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" display-message -p -t test:0.0 '#{pane_id}')
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-buffer -b ai-summarize-stale 'stale selection'
   sleep 11
-  quoted_launcher=$(printf '%q' "$launcher")
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "$quoted_launcher"
+  quoted_runner_path=$(printf '%q' "$runner_path")
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "$quoted_runner_path"
   wait_for_log_line "$log_file" '^display-message .*Nothing selected\.' || fail "stale-only prefixed buffer should fall through to Nothing selected"
   rg -q '^display-popup ' "$log_file" && fail "stale-only prefixed buffer should not launch popup"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-stale' || fail "stale-only prefixed buffer should not be consumed"
@@ -532,10 +532,10 @@ detached_cleanup() {
   done <<< "$buffers"
   [[ -n $newer_fresh_buffer && -n $older_fresh_buffer ]] || fail "expected copy-mode to create two fresh prefixed buffers"
 
-  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "$quoted_launcher"
+  tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" run-shell "$quoted_runner_path"
   wait_for_buffer_removal "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$newer_fresh_buffer" || fail "newest fresh prefixed buffer was not deleted after popup launch failed"
-  wait_for_log_line "$log_file" '^display-popup ' || fail "launcher never attempted popup"
-  wait_for_log_line "$log_file" '^display-message .*Popup launch failed\.' || fail "launcher did not fall back to a status-line message"
+  wait_for_log_line "$log_file" '^display-popup ' || fail "runner never attempted popup"
+  wait_for_log_line "$log_file" '^display-message .*Popup launch failed\.' || fail "runner did not fall back to a status-line message"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- "$older_fresh_buffer" || fail "older fresh prefixed buffer should remain when two fresh buffers share the same timestamp"
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" list-buffers -F '#{buffer_name}' | rg -Fxq -- 'ai-summarize-stale' || fail "stale-only prefixed buffer should remain"
 
@@ -547,12 +547,12 @@ detached_cleanup() {
 no_selection() {
   print -u2 -r -- "scenario: no selection popup"
 
-  local log_file transcript driver_script launcher
+  local log_file transcript driver_script runner_path
   TMUX_AI_SUMMARIZE_SCENARIO='no-selection'
   TMUX_AI_SUMMARIZE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize.XXXXXX")
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   transcript="$TMUX_AI_SUMMARIZE_TMPDIR/client.typescript"
-  launcher="$repo_root/scripts/summarize-selection.zsh"
+  runner_path="$repo_root/scripts/summarize-selection.zsh"
   TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
 
@@ -684,7 +684,7 @@ wait_for_log_line '^display-popup ' || fail "no-selection path did not launch a 
 wait_for_transcript_pattern 'Nothing selected\.' || fail "no-selection popup did not render the expected message"
 EOF
   chmod +x "$driver_script"
-  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$launcher" "$log_file"
+  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file"
 
   cleanup_detached_cleanup
   trap - EXIT INT TERM
@@ -693,12 +693,12 @@ EOF
 whitespace_only() {
   print -u2 -r -- "scenario: whitespace-only popup"
 
-  local log_file transcript driver_script launcher
+  local log_file transcript driver_script runner_path
   TMUX_AI_SUMMARIZE_SCENARIO='whitespace-only'
   TMUX_AI_SUMMARIZE_TMPDIR=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize.XXXXXX")
   log_file="$TMUX_AI_SUMMARIZE_TMPDIR/tmux.log"
   transcript="$TMUX_AI_SUMMARIZE_TMPDIR/client.typescript"
-  launcher="$repo_root/scripts/summarize-selection.zsh"
+  runner_path="$repo_root/scripts/summarize-selection.zsh"
   TMUX_AI_SUMMARIZE_SOCKET="tmux-ai-summarize-${RANDOM}${RANDOM}"
   TMUX_AI_SUMMARIZE_WRAPPER_DIR=$(setup_tmux_wrapper "$TMUX_AI_SUMMARIZE_TMPDIR" "$log_file")
 
@@ -832,7 +832,7 @@ wait_for_transcript_pattern 'Nothing to summarize\.' || fail "whitespace-only po
 wait_for_buffer_removal "$fresh_buffer_name" || fail "whitespace-only path did not delete the selected buffer"
 EOF
   chmod +x "$driver_script"
-  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$launcher" "$log_file"
+  zsh "$driver_script" "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" "$TMUX_AI_SUMMARIZE_SOCKET" "$transcript" "$runner_path" "$log_file"
 
   cleanup_detached_cleanup
   trap - EXIT INT TERM

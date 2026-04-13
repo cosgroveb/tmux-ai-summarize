@@ -7,12 +7,12 @@ default_summary_prompt() {
 }
 
 get_tmux_option() {
-  local option_name=$1
-  local default_value=${2:-}
-  local option_value
+  local name=$1
+  local fallback=${2:-}
+  local value
 
-  option_value=$(tmux show-option -gqv "$option_name")
-  print -r -- "${option_value:-$default_value}"
+  value=$(tmux show-option -gqv "$name")
+  print -r -- "${value:-$fallback}"
 }
 
 resolve_api_key() {
@@ -43,11 +43,11 @@ resolve_model() {
 }
 
 resolve_prompt() {
-  local configured_prompt
+  local prompt_override
 
-  configured_prompt=$(get_tmux_option '@ai-summarize-prompt' '')
-  if [[ -n $configured_prompt ]]; then
-    print -r -- "$configured_prompt"
+  prompt_override=$(get_tmux_option '@ai-summarize-prompt' '')
+  if [[ -n $prompt_override ]]; then
+    print -r -- "$prompt_override"
     return 0
   fi
 
@@ -89,8 +89,8 @@ extract_summary_content() {
 }
 
 latest_ai_summarize_buffer() {
-  local freshness_cutoff_seconds=${1:-2}
-  local buffer_name newest_buffer_name='' candidate_suffix newest_suffix
+  local fresh_window_seconds=${1:-2}
+  local buffer_name freshest_buffer='' candidate_tail freshest_tail
   integer buffer_created newest_created=-1 now age
 
   now=${EPOCHSECONDS:-$(date +%s)}
@@ -98,28 +98,28 @@ latest_ai_summarize_buffer() {
   while IFS='|' read -r buffer_name buffer_created; do
     if [[ $buffer_name == ai-summarize-* ]]; then
       (( age = now - buffer_created ))
-      if (( age >= 0 && age <= freshness_cutoff_seconds )); then
+      if (( age >= 0 && age <= fresh_window_seconds )); then
         if (( buffer_created > newest_created )); then
           newest_created=$buffer_created
-          newest_buffer_name=$buffer_name
-        elif (( buffer_created == newest_created )) && [[ -n $newest_buffer_name ]]; then
-          candidate_suffix=${buffer_name##*-}
-          newest_suffix=${newest_buffer_name##*-}
+          freshest_buffer=$buffer_name
+        elif (( buffer_created == newest_created )) && [[ -n $freshest_buffer ]]; then
+          candidate_tail=${buffer_name##*-}
+          freshest_tail=${freshest_buffer##*-}
 
-          if [[ $candidate_suffix =~ ^[0-9]+$ && $newest_suffix =~ ^[0-9]+$ ]]; then
-            if (( candidate_suffix > newest_suffix )) || { (( candidate_suffix == newest_suffix )) && [[ $buffer_name > $newest_buffer_name ]]; }; then
-              newest_buffer_name=$buffer_name
+          if [[ $candidate_tail =~ ^[0-9]+$ && $freshest_tail =~ ^[0-9]+$ ]]; then
+            if (( candidate_tail > freshest_tail )) || { (( candidate_tail == freshest_tail )) && [[ $buffer_name > $freshest_buffer ]]; }; then
+              freshest_buffer=$buffer_name
             fi
-          elif [[ $buffer_name > $newest_buffer_name ]]; then
-            newest_buffer_name=$buffer_name
+          elif [[ $buffer_name > $freshest_buffer ]]; then
+            freshest_buffer=$buffer_name
           fi
         fi
       fi
     fi
   done < <(tmux list-buffers -F '#{buffer_name}|#{buffer_created}')
 
-  [[ -n $newest_buffer_name ]] || return 1
-  print -r -- "$newest_buffer_name"
+  [[ -n $freshest_buffer ]] || return 1
+  print -r -- "$freshest_buffer"
 }
 
 delete_ai_summarize_buffer() {
