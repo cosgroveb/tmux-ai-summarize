@@ -50,7 +50,7 @@ api_key=$(resolve_api_key) || {
   hold_open_and_exit
 }
 if [[ -z $api_key ]]; then
-  render_popup_text 'Missing API key. Set OPENAI_API_KEY or @ai-summarize-api-key.'
+  render_popup_text 'Missing API key. Set TMUX_AI_SUMMARIZE_API_KEY, OPENAI_API_KEY, or @ai-summarize-api-key.'
   hold_open_and_exit
 fi
 

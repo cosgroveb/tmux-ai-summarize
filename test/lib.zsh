@@ -114,9 +114,12 @@ wait_for_popup_loading() {
 }
 
 wait_for_live_summary() {
+  emulate -L zsh
+  setopt extended_glob
   local timeout=200
   local content
   local reason=
+  local summary_tail
 
   # Poll for up to 20 seconds so slower live-provider runs still surface a reason on failure.
   while (( timeout > 0 )); do
@@ -127,9 +130,26 @@ wait_for_live_summary() {
       print -u2 -r -- "$reason"
       return 1
     fi
-    # script(1) can flatten popup redraws into one long line, with border or margin characters before the bullet.
-    if print -r -- "$content" | rg -q -- '(^|[^[:alnum:]])[*-] [^[:space:]]'; then
-      return 0
+
+    if [[ $content == *'Summarizing...'* ]]; then
+      summary_tail=${content##*Summarizing...}
+      summary_tail=${summary_tail//$'\r'/ }
+      summary_tail=${summary_tail//$'\n'/ }
+      summary_tail=${summary_tail//$'\t'/ }
+      summary_tail=${summary_tail//│/ }
+      summary_tail=${summary_tail//┌/ }
+      summary_tail=${summary_tail//┐/ }
+      summary_tail=${summary_tail//└/ }
+      summary_tail=${summary_tail//┘/ }
+      summary_tail=${summary_tail//─/ }
+      summary_tail=${summary_tail//|/ }
+      summary_tail=${summary_tail// ##/ }
+      summary_tail=${summary_tail# }
+      summary_tail=${summary_tail% }
+
+      if print -r -- "$summary_tail" | rg -q -- '[[:alnum:]]'; then
+        return 0
+      fi
     fi
     sleep 0.1
     (( timeout-- ))

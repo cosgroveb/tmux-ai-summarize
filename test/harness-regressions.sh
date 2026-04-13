@@ -33,12 +33,15 @@ rg -q 'summary_buffer_fresh_window_seconds' "$selector_script" || fail "summariz
 rg -q 'hold_open_and_exit' "$popup_script" || fail "popup helper should make its non-returning behavior obvious"
 rg -q 'cleanup_source_buffer$' "$popup_script" || fail "popup should explicitly clean up the tmux buffer on the read-failure path"
 rg -q '^set -eu$' "$popup_script" || fail "popup should fail fast with set -eu"
+rg -q 'TMUX_AI_SUMMARIZE_API_KEY, OPENAI_API_KEY, or @ai-summarize-api-key' "$popup_script" || fail "popup should mention the plugin-prefixed API key env var in the missing-key error"
 ! rg -q '^PLUGIN_DIR=\$\(' "$plugin_entrypoint" || fail "plugin entrypoint should use the zsh path modifier for PLUGIN_DIR"
 ! rg -q '^get_tmux_option\(\)' "$plugin_entrypoint" || fail "plugin entrypoint should source shared option helpers instead of redefining them"
 rg -q 'quoted_key=\$\(printf '\''%q'\'' "\$key"\)' "$plugin_entrypoint" || fail "plugin entrypoint should quote the configured key before installing the binding"
 ! rg -q 'bind-key -T copy-mode-vi \$key ' "$plugin_entrypoint" || fail "plugin entrypoint should not inject the raw key into the binding command"
 rg -q '^set -eu$' "$plugin_entrypoint" || fail "plugin entrypoint should fail fast with set -eu"
 rg -q "typeset -gr default_summary_model='gpt-5.4-nano'" "$plugin_lib" || fail "plugin lib should expose the default model as a shared constant"
+rg -q 'TMUX_AI_SUMMARIZE_API_KEY' "$plugin_lib" || fail "plugin lib should look for TMUX_AI_SUMMARIZE_API_KEY before fallback config"
+rg -q 'TMUX_AI_SUMMARIZE_BASE_URL' "$plugin_lib" || fail "plugin lib should look for TMUX_AI_SUMMARIZE_BASE_URL before fallback config"
 rg -q '\[\[ \$actual_model == "\$default_summary_model" \]\]' "$integration_script" || fail "mock-mode model assertion should use the shared default model"
 rg -q 'rg -q '\''\^display-popup '\''' "$integration_script" || fail "expected the stale-popup assertion to remain in the detached cleanup scenario"
 rg -q 'rg -q '\''\^display-popup '\'' "\$log_file" 2>/dev/null' "$integration_script" || fail "stale-popup assertion should not print rg errors when the log file is absent"
@@ -47,7 +50,14 @@ rg -q 'rg -q '\''\^display-popup '\'' "\$log_file" 2>/dev/null' "$integration_sc
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/tmux-ai-summarize-regressions.XXXXXX")
 transcript_file="$tmpdir/live-transcript.txt"
 error_log="$tmpdir/live-transcript.err"
-print -r -- $'provider output\n- bullet one\n' >"$transcript_file"
+prompt_text=$(zsh -lc 'source "$1"; default_summary_prompt' -- "$plugin_lib")
+print -r -- "$prompt_text" | rg -Fq -- '<task>' || fail "default prompt should use the task wrapper"
+print -r -- "$prompt_text" | rg -Fq -- '<rules>' || fail "default prompt should use the rules wrapper"
+print -r -- "$prompt_text" | rg -Fq -- '<format>' || fail "default prompt should use the format wrapper"
+print -r -- "$prompt_text" | rg -Fq -- 'Do not default to bullets.' || fail "default prompt should tell the model not to default to bullets"
+print -r -- "$prompt_text" | rg -Fq -- 'Next step:' || fail "default prompt should define the gated action line"
+
+print -r -- $'provider output\nSummarizing...\nPush failed because origin/main has commits this branch does not have yet.\n' >"$transcript_file"
 
 if ! (
   sleep() { :; }
@@ -57,10 +67,10 @@ if ! (
 ) >/dev/null 2>"$error_log"; then
   sed -n '1,80p' "$error_log" >&2 || true
   rm -rf "$tmpdir"
-  fail "live summary detector should accept bullet output"
+  fail "live summary detector should accept plain-language summaries after the loading state"
 fi
 
-print -r -- $'provider output\n|- bullet one\n' >"$transcript_file"
+print -r -- $'provider output\nSummarizing...\nNext step: pull the remote changes, then push again.\n' >"$transcript_file"
 
 if ! (
   sleep() { :; }
@@ -70,10 +80,10 @@ if ! (
 ) >/dev/null 2>"$error_log"; then
   sed -n '1,80p' "$error_log" >&2 || true
   rm -rf "$tmpdir"
-  fail "live summary detector should accept popup-framed bullet output"
+  fail "live summary detector should accept a gated Next step line after the loading state"
 fi
 
-print -r -- 'screen prefix |- bullet one             | trailing screen text' >"$transcript_file"
+print -r -- 'screen prefix Summarizing... Push failed because origin/main is ahead. Next step: pull, then push again. trailing screen text' >"$transcript_file"
 
 if ! (
   sleep() { :; }
@@ -83,7 +93,7 @@ if ! (
 ) >/dev/null 2>"$error_log"; then
   sed -n '1,80p' "$error_log" >&2 || true
   rm -rf "$tmpdir"
-  fail "live summary detector should accept flattened popup transcripts"
+  fail "live summary detector should accept flattened popup transcripts with sentence summaries"
 fi
 
 rm -rf "$tmpdir"

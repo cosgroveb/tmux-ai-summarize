@@ -38,13 +38,24 @@ Enter copy mode. Select text. Press `S`.
 
 ## Settings
 
-- API key: `OPENAI_API_KEY` or `@ai-summarize-api-key`
-- Base URL: `OPENAI_BASE_URL` or `@ai-summarize-base-url` (default: `https://api.openai.com/v1`)
-- Model: `TMUX_AI_SUMMARIZE_MODEL` or `@ai-summarize-model` (default: `gpt-5.4-nano`)
-- Prompt: `@ai-summarize-prompt`
-- Key: `@ai-summarize-key` (default: `S`)
+Set your API key. Everything else has sensible defaults.
 
-Environment variables win over tmux options.
+Plugin-specific env vars take priority over `OPENAI_*` vars. `OPENAI_*` vars take priority over tmux options.
+
+| Setting | Env var | Fallback env var | Tmux option | Default |
+|---------|---------|------------------|-------------|---------|
+| API key | `TMUX_AI_SUMMARIZE_API_KEY` | `OPENAI_API_KEY` | `@ai-summarize-api-key` | - |
+| Base URL | `TMUX_AI_SUMMARIZE_BASE_URL` | `OPENAI_BASE_URL` | `@ai-summarize-base-url` | `https://api.openai.com/v1` |
+| Model | `TMUX_AI_SUMMARIZE_MODEL` | - | `@ai-summarize-model` | `gpt-5.4-nano` |
+| Prompt | - | - | `@ai-summarize-prompt` | built-in |
+| Key | - | - | `@ai-summarize-key` | `S` |
+
+Set tmux options in `tmux.conf` with `set -g`:
+
+```tmux
+set -g @ai-summarize-api-key 'sk-...'
+set -g @ai-summarize-model 'gpt-5.4-nano'
+```
 
 ## OpenAI-Compatible API
 
@@ -57,6 +68,13 @@ For a local or proxy API:
 ```tmux
 set -g @ai-summarize-base-url 'http://localhost:8000/v1'
 set -g @ai-summarize-api-key 'dummy-key'
+```
+
+Same config with env vars:
+
+```sh
+export TMUX_AI_SUMMARIZE_BASE_URL='http://localhost:8000/v1'
+export TMUX_AI_SUMMARIZE_API_KEY='dummy-key'
 ```
 
 TODO: Support emacs copy mode too.

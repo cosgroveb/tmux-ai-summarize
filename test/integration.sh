@@ -129,7 +129,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 request_log_path, port_file_path = sys.argv[1:3]
-summary_text = "- concise point one\n- concise point two\n"
+summary_text = "The selected text is a short tmux-ai-summarize integration fixture.\n"
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -176,7 +176,9 @@ run_attached_client_scenario() {
   local fixture_text='tmux ai summarize integration fixture'
   local scenario_name="scenario: attached-client ${provider_mode} path"
   local live_base_url live_model request_url
-  local quoted_fixture
+  local mock_api_key='plugin-test-key'
+  local mock_base_url
+  local quoted_fixture actual_prompt
   local log_file transcript request_log='' port_file='' port='' binding driver_script actual_model actual_user_content
   local runner_path
 
@@ -204,6 +206,7 @@ run_attached_client_scenario() {
     start_mock_provider "$request_log" "$port_file"
     wait_for_file "$port_file" || fail "mock provider never published a port"
     port=$(cat "$port_file")
+    mock_base_url="http://127.0.0.1:$port/v1"
   elif [[ -z ${OPENAI_API_KEY:-} ]]; then
     fail "live provider mode requires OPENAI_API_KEY"
   else
@@ -213,8 +216,10 @@ run_attached_client_scenario() {
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" -f /dev/null new-session -d -s test "printf '%s\\n' $quoted_fixture; sleep 1000" >/dev/null
   tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-option -g mode-keys vi
   if [[ $provider_mode == mock ]]; then
-    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -g OPENAI_API_KEY 'test-key'
-    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -g OPENAI_BASE_URL "http://127.0.0.1:$port/v1"
+    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -g TMUX_AI_SUMMARIZE_API_KEY "$mock_api_key"
+    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -g OPENAI_API_KEY 'wrong-openai-key'
+    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -g TMUX_AI_SUMMARIZE_BASE_URL "$mock_base_url"
+    tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -g OPENAI_BASE_URL 'http://127.0.0.1:9/v1'
     tmux_cmd "$TMUX_AI_SUMMARIZE_WRAPPER_DIR" set-environment -gu TMUX_AI_SUMMARIZE_MODEL
   else
     live_base_url=${OPENAI_BASE_URL:-https://api.openai.com/v1}
@@ -269,12 +274,11 @@ print -n -- 'S' >&$attached_client_input_fd
 wait_for_log_line '^display-popup ' || fail_test "runner never attempted popup on attached client"
 wait_for_log_line '^delete-buffer -b ai-summarize-' || fail_test "binding never consumed a fresh prefixed buffer"
 if [[ $provider_mode == mock ]]; then
-  wait_for_popup_loading '- concise point one' || fail_test "popup never showed an observable loading state before final output"
-  wait_for_transcript_pattern '- concise point one' || fail_test "popup never rendered the first bullet prefix"
-  wait_for_transcript_pattern '- concise point two' || fail_test "popup never rendered the second bullet prefix"
+  wait_for_popup_loading 'The selected text is a short tmux-ai-summarize integration fixture\.' || fail_test "popup never showed an observable loading state before final output"
+  wait_for_transcript_pattern 'The selected text is a short tmux-ai-summarize integration fixture\.' || fail_test "popup never rendered the mock summary text"
 else
   wait_for_transcript_pattern 'Summarizing\.\.\.' || fail_test "popup never rendered the loading state in live mode"
-  wait_for_live_summary || fail_test "live provider popup never rendered bullet output"
+  wait_for_live_summary || fail_test "live provider popup never rendered a readable summary"
 fi
 EOF
   chmod +x "$driver_script"
@@ -282,10 +286,15 @@ EOF
 
   if [[ $provider_mode == mock ]]; then
     jq -e '.path == "/v1/chat/completions"' "$request_log" >/dev/null || fail "request path was not /v1/chat/completions"
-    jq -e '.headers.Authorization == "Bearer test-key"' "$request_log" >/dev/null || fail "request did not include the Authorization header"
+    jq -e --arg expected_auth "Bearer $mock_api_key" '.headers.Authorization == $expected_auth' "$request_log" >/dev/null || fail "request did not use the plugin-prefixed API key"
     actual_model=$(jq -r '.body.model // "<missing>"' "$request_log")
     [[ $actual_model == "$default_summary_model" ]] || fail "request used model $actual_model instead of $default_summary_model"
     jq -e '.body.messages[0].role == "system"' "$request_log" >/dev/null || fail "request did not include the system prompt"
+    actual_prompt=$(jq -r '.body.messages[0].content // "<missing>"' "$request_log")
+    print -r -- "$actual_prompt" | rg -Fq -- '<task>' || fail "system prompt did not use the task wrapper"
+    print -r -- "$actual_prompt" | rg -Fq -- '<format>' || fail "system prompt did not use the format wrapper"
+    print -r -- "$actual_prompt" | rg -Fq -- 'Do not default to bullets.' || fail "system prompt did not tell the model to avoid bullet defaults"
+    print -r -- "$actual_prompt" | rg -Fq -- 'Next step:' || fail "system prompt did not define the gated action line"
     actual_user_content=$(jq -r '.body.messages[1].content // "<missing>"' "$request_log")
     print -r -- "$actual_user_content" | rg -Fq -- "$fixture_text" || fail "request user content was: $actual_user_content"
   else

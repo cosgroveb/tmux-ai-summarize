@@ -5,7 +5,38 @@ typeset -gr default_summary_model='gpt-5.4-nano'
 
 default_summary_prompt() {
   emulate -L zsh
-  print -r -- 'Summarize the provided text as concise bullet points. Use plain language. Keep important names, commands, paths, flags, and numbers. Do not add preamble, conclusion, or markdown fencing.'
+  print -r -- '<task>
+Summarize the selected text for a tmux user. Make it legible fast.
+</task>
+
+<rules>
+Use plain language and user terms. Lead with the main point. Explain what happened or what the text means.
+Keep commands, paths, flags, branch names, numbers, and error text only when they matter.
+Stay grounded in the source. Do not invent details.
+Do not add preamble, conclusion, markdown fencing, maintainer context, or internal implementation detail unless the source itself makes it user-relevant.
+</rules>
+
+<format>
+Pick the smallest format that fits:
+- one sentence
+- a short paragraph
+- 1 to 3 bullets for distinct points
+Do not default to bullets.
+Do not restate the text line by line.
+Add "Next step:" only when the source itself gives the action or the action is explicit and mechanical. Otherwise omit it.
+</format>
+
+<examples>
+<example>
+<source>git push was rejected because the remote branch has new commits, and Git says to pull first.</source>
+<summary>Push failed because the remote branch has commits this branch does not have yet. Git says to pull the remote changes before pushing again.</summary>
+</example>
+<example>
+<source>build output shows one missing env var and one missing file.</source>
+<summary>- The build is missing the required env var.
+- The build also cannot find the referenced file.</summary>
+</example>
+</examples>'
 }
 
 get_tmux_option() {
@@ -20,6 +51,10 @@ get_tmux_option() {
 
 resolve_api_key() {
   emulate -L zsh
+  if [[ -n ${TMUX_AI_SUMMARIZE_API_KEY:-} ]]; then
+    print -r -- "$TMUX_AI_SUMMARIZE_API_KEY"
+    return 0
+  fi
   if [[ -n ${OPENAI_API_KEY:-} ]]; then
     print -r -- "$OPENAI_API_KEY"
     return 0
@@ -30,6 +65,10 @@ resolve_api_key() {
 
 resolve_base_url() {
   emulate -L zsh
+  if [[ -n ${TMUX_AI_SUMMARIZE_BASE_URL:-} ]]; then
+    print -r -- "$TMUX_AI_SUMMARIZE_BASE_URL"
+    return 0
+  fi
   if [[ -n ${OPENAI_BASE_URL:-} ]]; then
     print -r -- "$OPENAI_BASE_URL"
     return 0
