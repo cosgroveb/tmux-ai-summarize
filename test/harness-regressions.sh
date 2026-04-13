@@ -73,4 +73,17 @@ if ! (
   fail "live summary detector should accept popup-framed bullet output"
 fi
 
+print -r -- 'screen prefix |- bullet one             | trailing screen text' >"$transcript_file"
+
+if ! (
+  sleep() { :; }
+  source "$helpers_script"
+  transcript_path="$transcript_file"
+  wait_for_live_summary
+) >/dev/null 2>"$error_log"; then
+  sed -n '1,80p' "$error_log" >&2 || true
+  rm -rf "$tmpdir"
+  fail "live summary detector should accept flattened popup transcripts"
+fi
+
 rm -rf "$tmpdir"
