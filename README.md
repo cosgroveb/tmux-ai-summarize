@@ -2,11 +2,9 @@
 
 [![CI](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml/badge.svg)](https://github.com/clnkr-ai/tmux-ai-summarize/actions/workflows/ci.yml)
 
-Press `S` in `copy-mode-vi`, tmux copies the selection, then opens a popup with a short bullet summary from an OpenAI-compatible API.
+Press `S` in copy mode. tmux copies the text. You get an AI summary in a popup.
 
 The popup stays open. Enter copy mode there if you want to copy the summary back out.
-
-v1 only binds `copy-mode-vi`. If you are not already using vi keys, set `mode-keys` to `vi`.
 
 ## Requirements
 
@@ -17,86 +15,51 @@ v1 only binds `copy-mode-vi`. If you are not already using vi keys, set `mode-ke
 
 ## Install with TPM
 
-Add this to `tmux.conf`:
+If you already use TPM, add this to `tmux.conf`:
 
 ```tmux
 set -g mode-keys vi
 set -g @plugin 'clnkr-ai/tmux-ai-summarize'
 set -g @ai-summarize-key 'S'
+# set -g @ai-summarize-model 'gpt-5.4-nano' # default
 run '~/.tmux/plugins/tpm/tpm'
 ```
 
-Reload tmux. Then install the plugin with TPM.
+`run '~/.tmux/plugins/tpm/tpm'` is TPM's own line. Keep it at the bottom of `tmux.conf`.
 
-## Manual install
+If tmux is already running, reload your config:
 
-Clone the repo into `~/.tmux/plugins/tmux-ai-summarize`, then add:
-
-```tmux
-run-shell '~/.tmux/plugins/tmux-ai-summarize/tmux-ai-summarize.tmux'
+```sh
+tmux source-file ~/.tmux.conf
 ```
 
-Reload tmux after updating `tmux.conf`.
+Use the path to your `tmux.conf` if it lives somewhere else.
+
+Install the plugin with `prefix` + `I`. From the shell, `~/.tmux/plugins/tpm/bin/install_plugins` does the same thing.
 
 ## Usage
 
-1. Enter copy mode with vi keys.
-2. Select text.
-3. Press `S`.
+Enter copy mode. Select text. Press `S`.
 
-tmux copies first. The plugin opens a popup, prints `Summarizing...`, then swaps in bullet output.
+## Settings
 
-## Configuration
+- API key: `OPENAI_API_KEY` or `@ai-summarize-api-key`
+- Base URL: `OPENAI_BASE_URL` or `@ai-summarize-base-url` (default: `https://api.openai.com/v1`)
+- Model: `TMUX_AI_SUMMARIZE_MODEL` or `@ai-summarize-model` (default: `gpt-5.4-nano`)
+- Prompt: `@ai-summarize-prompt`
+- Key: `@ai-summarize-key` (default: `S`)
 
-tmux options:
+Environment variables win over tmux options.
 
-- `@ai-summarize-key`: copy-mode keybinding. Default: `S`
-- `@ai-summarize-api-key`: API key fallback when `OPENAI_API_KEY` is unset
-- `@ai-summarize-base-url`: base URL fallback when `OPENAI_BASE_URL` is unset
-- `@ai-summarize-model`: model fallback when `TMUX_AI_SUMMARIZE_MODEL` is unset
-- `@ai-summarize-prompt`: full prompt override
+## OpenAI-Compatible API
 
-Environment variables:
+Use any OpenAI-compatible API by setting a different base URL. Default: `https://api.openai.com/v1`.
 
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `TMUX_AI_SUMMARIZE_MODEL`
+Set the API root, including `/v1` if your provider expects it.
 
-Precedence:
-
-- API key: `OPENAI_API_KEY`, then `@ai-summarize-api-key`
-- Base URL: `OPENAI_BASE_URL`, then `@ai-summarize-base-url`, then `https://api.openai.com/v1`
-- Model: `TMUX_AI_SUMMARIZE_MODEL`, then `@ai-summarize-model`, then `gpt-5.4-nano`
-- Prompt: `@ai-summarize-prompt`, else the built-in prompt
-- Binding key: `@ai-summarize-key`, else `S`
-
-Default model: `gpt-5.4-nano`.
-
-## OpenAI-Compatible Endpoints
-
-The plugin sends `POST /chat/completions` to an OpenAI-compatible endpoint. Default: `https://api.openai.com/v1`.
-
-For a local or proxy endpoint:
+For a local or proxy API:
 
 ```tmux
 set -g @ai-summarize-base-url 'http://localhost:8000/v1'
 set -g @ai-summarize-api-key 'dummy-key'
 ```
-
-## Example config
-
-```tmux
-set -g mode-keys vi
-set -g @plugin 'clnkr-ai/tmux-ai-summarize'
-set -g @ai-summarize-key 'S'
-set -g @ai-summarize-model 'gpt-5.4-nano'
-run '~/.tmux/plugins/tpm/tpm'
-```
-
-## Maintainer note
-
-The default test path is mock-only. The live workflow runs the same harness with `TMUX_AI_SUMMARIZE_PROVIDER_MODE=live`.
-
-The GitHub `Live Provider` workflow requires a repo or org `OPENAI_API_KEY` secret. If it is missing, the workflow fails.
-
-This repo does not publish GitHub Releases. Release flow: keep `main` green, run the live-provider workflow on `main`, then tag `v0.1.0`.
