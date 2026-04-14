@@ -107,6 +107,7 @@ resolve_buffer_prefix() {
   local buffer_scope=${TMUX_AI_SUMMARIZE_BUFFER_SCOPE:-}
 
   if [[ -n $buffer_scope ]]; then
+    buffer_scope=${buffer_scope#\\}
     print -r -- "ai-summarize-$buffer_scope-"
     return 0
   fi
@@ -195,7 +196,7 @@ delete_ai_summarize_buffer() {
   local buffer_name=$1
 
   [[ -n $buffer_name ]] || return 0
-  tmux delete-buffer -b "$buffer_name"
+  tmux delete-buffer -b "$buffer_name" 2>/dev/null || true
 }
 
 show_status_message() {
